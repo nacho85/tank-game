@@ -1,0 +1,613 @@
+export const MACRO_GRID_SIZE = 13;
+export const TILE_SUBDIVISION = 2;
+export const GRID_SIZE = MACRO_GRID_SIZE * TILE_SUBDIVISION;
+export const TILE_SIZE = 82 / TILE_SUBDIVISION;
+export const MACRO_TILE_SIZE = TILE_SIZE * TILE_SUBDIVISION;
+export const OUTER_BORDER_TILES = 1;
+export const OUTER_BORDER_SIZE = OUTER_BORDER_TILES * TILE_SIZE;
+
+export const BOARD_WIDTH = (GRID_SIZE + (OUTER_BORDER_TILES * 2)) * TILE_SIZE;
+export const BOARD_HEIGHT = (GRID_SIZE + (OUTER_BORDER_TILES * 2)) * TILE_SIZE;
+export const HUD_SIDEBAR_WIDTH = 260;
+export const HUD_GUTTER = 16;
+export const SETTINGS_STORAGE_KEY = "tank-game-settings-v1";
+export const PRESETS_STORAGE_KEY = "tank-game-presets-v1";
+export const STATS_STORAGE_KEY = "tank-game-runtime-stats-v1";
+
+export const TILE = {
+  GROUND: "ground",
+  ROAD: "road",
+  BUSH: "bush",
+  BRICK: "brick",
+  STEEL: "steel",
+  WATER: "water",
+  BASE: "base",
+};
+
+export const PLAYER_SPEED = 235;
+export const ENEMY_SPEED = 130;
+export const BULLET_SPEED = 620;
+export const FIRE_COOLDOWN_PLAYER = 170;
+export const FIRE_COOLDOWN_ENEMY = 950;
+export const MESSAGE_DURATION = 1200;
+export const PLAYER_TURRET_MANUAL_TURN_SPEED = (160 * Math.PI) / 180;
+
+export const MOVE_DEADZONE = 0.2;
+export const AIM_DEADZONE = 0.22;
+export const PLAYER_RESPAWN_DELAY = 2200;
+export const MENU_AXIS_THRESHOLD = 0.55;
+
+export const TANK_RENDER_SIZE = MACRO_TILE_SIZE;
+export const TANK_COLLISION_SIZE = 58;
+export const TANK_HIT_RADIUS = 32;
+
+export const MACRO_EAGLE_COL = 6;
+export const MACRO_EAGLE_ROW = 12;
+export const EAGLE_COL = MACRO_EAGLE_COL * TILE_SUBDIVISION;
+export const EAGLE_ROW = MACRO_EAGLE_ROW * TILE_SUBDIVISION;
+
+export const MACRO_PLAYER_SPAWN_COL = 4;
+export const MACRO_PLAYER_SPAWN_ROW = 12;
+export const PLAYER_SPAWN_COL = MACRO_PLAYER_SPAWN_COL * TILE_SUBDIVISION;
+export const PLAYER_SPAWN_ROW = MACRO_PLAYER_SPAWN_ROW * TILE_SUBDIVISION;
+export const MACRO_PLAYER_TWO_SPAWN_COL = 8;
+export const MACRO_PLAYER_TWO_SPAWN_ROW = 12;
+export const PLAYER_TWO_SPAWN_COL = MACRO_PLAYER_TWO_SPAWN_COL * TILE_SUBDIVISION;
+export const PLAYER_TWO_SPAWN_ROW = MACRO_PLAYER_TWO_SPAWN_ROW * TILE_SUBDIVISION;
+
+export const PLAYER_BODY_BASE_FACING_DEG = 90;
+export const PLAYER_TURRET_BASE_FACING_RAD = Math.PI / 2;
+export const PLAYER_BODY_RING_CENTER = { x: 355.0, y: 245.5, w: 712, h: 783 };
+export const PLAYER_TURRET_CAP_CENTER = { x: 239.0, y: 259.5, w: 556, h: 1191 };
+export const ENEMY_BODY_RING_CENTER = { x: 355.0, y: 245.5, w: 712, h: 783 };
+export const ENEMY_TURRET_CAP_CENTER = { x: 239.0, y: 259.5, w: 556, h: 1191 };
+export const TANKETTE_BODY_TURRET_ANCHOR = { x: 479.0, y: 489.0, w: 1024, h: 1024 };
+export const TANKETTE_TURRET_PIVOT = { x: 118.0, y: 119.0, w: 239, h: 479 };
+
+export const ENEMY_BODY_BASE_FACING_DEG = 90;
+export const ENEMY_TURRET_BASE_FACING_RAD = Math.PI / 2;
+
+export const LEVEL_WAVE_CONFIGS = [
+  { totalEnemies: 6, maxConcurrent: 3 },
+  { totalEnemies: 8, maxConcurrent: 3 },
+  { totalEnemies: 10, maxConcurrent: 3 },
+  { totalEnemies: 12, maxConcurrent: 3 },
+  { totalEnemies: 14, maxConcurrent: 3 },
+];
+
+export const PATROL_ZONES = [
+  { minCol: 0, maxCol: 7, minRow: 0, maxRow: 9 },
+  { minCol: 8, maxCol: 17, minRow: 0, maxRow: 9 },
+  { minCol: 18, maxCol: 25, minRow: 0, maxRow: 9 },
+  { minCol: 0, maxCol: 9, minRow: 10, maxRow: 17 },
+  { minCol: 16, maxCol: 25, minRow: 10, maxRow: 17 },
+  { minCol: 4, maxCol: 21, minRow: 18, maxRow: 23 },
+];
+
+export const SETTINGS_TABS = [
+  { key: "mode", label: "Modo" },
+  { key: "controls", label: "Controles" },
+  { key: "mapGen", label: "Mapa / procgen" },
+  { key: "combat", label: "Combate" },
+  { key: "player", label: "Jugador" },
+  { key: "enemyAi", label: "Enemigos / IA" },
+  { key: "meta", label: "Meta / debug" },
+  { key: "turret", label: "Torreta" },
+  { key: "presets", label: "Presets" },
+];
+
+export const SETTINGS_SCHEMA = [
+  {
+    key: "gameMode",
+    label: "Modo de juego",
+    category: "mode",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 0,
+  },
+  {
+    key: "playerOneControlDevice",
+    label: "P1: control",
+    category: "controls",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 0,
+  },
+  {
+    key: "playerTwoControlDevice",
+    label: "P2: control",
+    category: "controls",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 0,
+  },
+  {
+    key: "survivalInitialLives",
+    label: "Survival: vidas iniciales",
+    category: "mode",
+    min: 1,
+    max: 9,
+    step: 1,
+    defaultValue: 3,
+  },
+  {
+    key: "survivalFortressRegenEvery",
+    label: "Survival: regenerar fortaleza cada N bajas",
+    category: "mode",
+    min: 5,
+    max: 40,
+    step: 1,
+    defaultValue: 15,
+  },
+  {
+    key: "survivalMaxConcurrentEnemies",
+    label: "Survival: enemigos simultáneos",
+    category: "mode",
+    min: 2,
+    max: 8,
+    step: 1,
+    defaultValue: 4,
+  },
+  {
+    key: "survivalShuffleEveryKills",
+    label: "Survival: reshuffle cada N bajas",
+    category: "mapGen",
+    min: 10,
+    max: 120,
+    step: 5,
+    defaultValue: 40,
+  },
+  {
+    key: "survivalMapAlgorithm",
+    label: "Algoritmo de mapa",
+    category: "mapGen",
+    min: 0,
+    max: 2,
+    step: 1,
+    defaultValue: 0,
+  },
+  {
+    key: "survivalRoadDensity",
+    label: "Densidad de caminos",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 28,
+  },
+  {
+    key: "survivalBrickDensity",
+    label: "Densidad de ladrillos",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 34,
+  },
+  {
+    key: "survivalBushDensity",
+    label: "Densidad de bushes",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 20,
+  },
+  {
+    key: "survivalBushClustering",
+    label: "Agrupación orgánica de bushes",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 64,
+  },
+  {
+    key: "survivalBushPatchScale",
+    label: "Tamaño de manchones de bushes",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 52,
+  },
+  {
+    key: "survivalSteelDensity",
+    label: "Densidad de steel",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 8,
+  },
+  {
+    key: "survivalWaterDensity",
+    label: "Densidad de agua",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 6,
+  },
+  {
+    key: "survivalWaterClustering",
+    label: "Agua agrupada en lagos/ríos",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 72,
+  },
+  {
+    key: "survivalWaterBridgeChance",
+    label: "Puentes de tierra sobre agua",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 38,
+  },
+  {
+    key: "survivalBuildingClustering",
+    label: "Agrupación ladrillo/steel en edificios",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 76,
+  },
+  {
+    key: "survivalBuildingComplexity",
+    label: "Complejidad de edificios",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 58,
+  },
+  {
+    key: "survivalShuffleVariability",
+    label: "Variabilidad entre reshuffles",
+    category: "mapGen",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 48,
+  },
+  {
+    key: "playerBulletLimit",
+    label: "Balas jugador simultáneas",
+    category: "combat",
+    min: 1,
+    max: 6,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "enemyBulletLimit",
+    label: "Balas enemigas simultáneas",
+    category: "combat",
+    min: 1,
+    max: 6,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "playerContinuousFire",
+    label: "Disparo continuo jugador",
+    category: "combat",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "playerBulletWidth",
+    label: "Ancho bala jugador",
+    category: "combat",
+    min: 8,
+    max: 28,
+    step: 1,
+    defaultValue: 14,
+  },
+  {
+    key: "playerBulletLength",
+    label: "Largo bala jugador",
+    category: "combat",
+    min: 16,
+    max: 56,
+    step: 1,
+    defaultValue: 36,
+  },
+  {
+    key: "playerBulletHitbox",
+    label: "Hitbox bala jugador",
+    category: "combat",
+    min: 4,
+    max: 28,
+    step: 1,
+    defaultValue: 10,
+  },
+  {
+    key: "playerBulletSpeed",
+    label: "Velocidad bala jugador",
+    category: "combat",
+    min: 220,
+    max: 1200,
+    step: 10,
+    defaultValue: 620,
+  },
+  {
+    key: "enemyBulletWidth",
+    label: "Ancho bala enemiga",
+    category: "combat",
+    min: 8,
+    max: 28,
+    step: 1,
+    defaultValue: 14,
+  },
+  {
+    key: "enemyBulletLength",
+    label: "Largo bala enemiga",
+    category: "combat",
+    min: 16,
+    max: 56,
+    step: 1,
+    defaultValue: 36,
+  },
+  {
+    key: "enemyBulletHitbox",
+    label: "Hitbox bala enemiga",
+    category: "combat",
+    min: 4,
+    max: 28,
+    step: 1,
+    defaultValue: 10,
+  },
+  {
+    key: "enemyBulletSpeed",
+    label: "Velocidad bala enemiga",
+    category: "combat",
+    min: 220,
+    max: 1200,
+    step: 10,
+    defaultValue: 620,
+  },
+  {
+    key: "enemySpawnDelayMs",
+    label: "Delay respawn enemigo (ms)",
+    category: "combat",
+    min: 0,
+    max: 5000,
+    step: 100,
+    defaultValue: 700,
+  },
+  {
+    key: "enemyTankCollision",
+    label: "Choque físico entre enemigos",
+    category: "combat",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "playerLives",
+    label: "Vidas del jugador",
+    category: "player",
+    min: 1,
+    max: 9,
+    step: 1,
+    defaultValue: 3,
+  },
+  {
+    key: "enemyBehaviorPreset",
+    label: "Perfil táctico",
+    category: "enemyAi",
+    min: 0,
+    max: 4,
+    step: 1,
+    defaultValue: 3,
+  },
+  {
+    key: "enemyAggression",
+    label: "Presión ofensiva",
+    category: "enemyAi",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 62,
+  },
+  {
+    key: "enemyNavigationSkill",
+    label: "Calidad de navegación",
+    category: "enemyAi",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 70,
+  },
+  {
+    key: "enemyBreakBricks",
+    label: "Uso de ladrillos rompibles",
+    category: "enemyAi",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 58,
+  },
+  {
+    key: "enemyRecoverySkill",
+    label: "Recuperación al atasco",
+    category: "enemyAi",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 72,
+  },
+  {
+    key: "enemyFireDiscipline",
+    label: "Disciplina de tiro",
+    category: "enemyAi",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 66,
+  },
+  {
+    key: "enemyShotFrequency",
+    label: "Frecuencia de disparo",
+    category: "enemyAi",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 58,
+  },
+  {
+    key: "bossBurstIntervalMs",
+    label: "Boss · intervalo entre tiros",
+    category: "enemyAi",
+    min: 60,
+    max: 360,
+    step: 10,
+    defaultValue: 150,
+  },
+  {
+    key: "bossBurstCooldownMs",
+    label: "Boss · pausa entre ráfagas",
+    category: "enemyAi",
+    min: 800,
+    max: 5000,
+    step: 100,
+    defaultValue: 2400,
+  },
+  {
+    key: "enemyTurretTurnSpeed",
+    label: "Velocidad giro torreta enemiga",
+    category: "enemyAi",
+    min: 20,
+    max: 240,
+    step: 5,
+    defaultValue: 110,
+  },
+  {
+    key: "enemyTanketteRatio",
+    label: "Proporción de tanquetas",
+    category: "enemyAi",
+    min: 0,
+    max: 100,
+    step: 1,
+    defaultValue: 18,
+  },
+  {
+    key: "enemyTanketteSpeed",
+    label: "Velocidad de tanquetas",
+    category: "enemyAi",
+    min: 120,
+    max: 260,
+    step: 5,
+    defaultValue: 165,
+  },
+  {
+    key: "debugEnemyNavOverlay",
+    label: "Mostrar rutas IA",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 0,
+  },
+  {
+    key: "debugSpawnReserveOverlay",
+    label: "Mostrar reservas de spawn",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 0,
+  },
+  {
+    key: "debugEnemyStateText",
+    label: "Mostrar estado IA",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 0,
+  },
+  {
+    key: "debugEnemyTargetOverlay",
+    label: "Mostrar objetivo actual",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "debugEnemyPathOptions",
+    label: "Mostrar caminos evaluados",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "debugEnemyVerboseHud",
+    label: "HUD IA detallado",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "autoEvaluateEnemyRoutes",
+    label: "Registrar atascos y repaths",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "autoCorrectEnemyRoutes",
+    label: "Autocorregir rutas",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 1,
+  },
+  {
+    key: "autoTestEnemyRoutes",
+    label: "Autotest / métricas continuas",
+    category: "meta",
+    min: 0,
+    max: 1,
+    step: 1,
+    defaultValue: 0,
+  },
+  {
+    key: "playerTurretUpExtraOffsetX",
+    label: "Torreta arriba: offset X",
+    category: "turret",
+    min: -10,
+    max: 10,
+    step: 1,
+    defaultValue: 2,
+  },
+  {
+    key: "playerTurretUpExtraOffsetY",
+    label: "Torreta arriba: offset atrás",
+    category: "turret",
+    min: 0,
+    max: 24,
+    step: 1,
+    defaultValue: 12,
+  },
+];
