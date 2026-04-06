@@ -1,5 +1,3 @@
-import * as Phaser from "phaser";
-
 export function circlesOverlap(x1, y1, r1, x2, y2, r2) {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -39,7 +37,7 @@ export function normalizeVector(x, y) {
 }
 
 export function angleDegFromVector(x, y) {
-  return Phaser.Math.RadToDeg(Math.atan2(y, x));
+  return (Math.atan2(y, x) * 180) / Math.PI;
 }
 
 export function randomChoice(arr) {
@@ -51,5 +49,8 @@ export function clamp(value, min, max) {
 }
 
 export function wrapRadDiff(target, current) {
-  return Phaser.Math.Angle.Wrap(target - current);
+  let value = target - current;
+  while (value <= -Math.PI) value += Math.PI * 2;
+  while (value > Math.PI) value -= Math.PI * 2;
+  return value;
 }

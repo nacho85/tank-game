@@ -1,13 +1,23 @@
-export const MACRO_GRID_SIZE = 13;
+export const MACRO_GRID_WIDTH = 13;
+export const MACRO_GRID_HEIGHT = 13;
+export const MACRO_GRID_SIZE = MACRO_GRID_HEIGHT;
 export const TILE_SUBDIVISION = 2;
-export const GRID_SIZE = MACRO_GRID_SIZE * TILE_SUBDIVISION;
+export const GRID_WIDTH = MACRO_GRID_WIDTH * TILE_SUBDIVISION;
+export const GRID_HEIGHT = MACRO_GRID_HEIGHT * TILE_SUBDIVISION;
+export const GRID_SIZE = GRID_HEIGHT;
+export const SURVIVAL_MACRO_GRID_WIDTH = 23;
+export const SURVIVAL_MACRO_GRID_HEIGHT = 13;
+export const SURVIVAL_GRID_WIDTH = SURVIVAL_MACRO_GRID_WIDTH * TILE_SUBDIVISION;
+export const SURVIVAL_GRID_HEIGHT = SURVIVAL_MACRO_GRID_HEIGHT * TILE_SUBDIVISION;
 export const TILE_SIZE = 82 / TILE_SUBDIVISION;
 export const MACRO_TILE_SIZE = TILE_SIZE * TILE_SUBDIVISION;
 export const OUTER_BORDER_TILES = 1;
 export const OUTER_BORDER_SIZE = OUTER_BORDER_TILES * TILE_SIZE;
 
-export const BOARD_WIDTH = (GRID_SIZE + (OUTER_BORDER_TILES * 2)) * TILE_SIZE;
-export const BOARD_HEIGHT = (GRID_SIZE + (OUTER_BORDER_TILES * 2)) * TILE_SIZE;
+export const BOARD_WIDTH = (GRID_WIDTH + (OUTER_BORDER_TILES * 2)) * TILE_SIZE;
+export const BOARD_HEIGHT = (GRID_HEIGHT + (OUTER_BORDER_TILES * 2)) * TILE_SIZE;
+export const SURVIVAL_BOARD_WIDTH = (SURVIVAL_GRID_WIDTH + (OUTER_BORDER_TILES * 2)) * TILE_SIZE;
+export const SURVIVAL_BOARD_HEIGHT = (SURVIVAL_GRID_HEIGHT + (OUTER_BORDER_TILES * 2)) * TILE_SIZE;
 export const HUD_SIDEBAR_WIDTH = 260;
 export const HUD_GUTTER = 16;
 export const SETTINGS_STORAGE_KEY = "tank-game-settings-v1";
@@ -41,24 +51,24 @@ export const TANK_RENDER_SIZE = MACRO_TILE_SIZE;
 export const TANK_COLLISION_SIZE = 58;
 export const TANK_HIT_RADIUS = 32;
 
-export const MACRO_EAGLE_COL = 6;
-export const MACRO_EAGLE_ROW = 12;
+export const MACRO_EAGLE_COL = Math.floor((MACRO_GRID_WIDTH - 1) / 2);
+export const MACRO_EAGLE_ROW = MACRO_GRID_HEIGHT - 1;
 export const EAGLE_COL = MACRO_EAGLE_COL * TILE_SUBDIVISION;
 export const EAGLE_ROW = MACRO_EAGLE_ROW * TILE_SUBDIVISION;
 
-export const MACRO_PLAYER_SPAWN_COL = 4;
-export const MACRO_PLAYER_SPAWN_ROW = 12;
+export const MACRO_PLAYER_SPAWN_COL = MACRO_EAGLE_COL - 2;
+export const MACRO_PLAYER_SPAWN_ROW = MACRO_GRID_HEIGHT - 1;
 export const PLAYER_SPAWN_COL = MACRO_PLAYER_SPAWN_COL * TILE_SUBDIVISION;
 export const PLAYER_SPAWN_ROW = MACRO_PLAYER_SPAWN_ROW * TILE_SUBDIVISION;
-export const MACRO_PLAYER_TWO_SPAWN_COL = 8;
-export const MACRO_PLAYER_TWO_SPAWN_ROW = 12;
+export const MACRO_PLAYER_TWO_SPAWN_COL = MACRO_EAGLE_COL + 2;
+export const MACRO_PLAYER_TWO_SPAWN_ROW = MACRO_GRID_HEIGHT - 1;
 export const PLAYER_TWO_SPAWN_COL = MACRO_PLAYER_TWO_SPAWN_COL * TILE_SUBDIVISION;
 export const PLAYER_TWO_SPAWN_ROW = MACRO_PLAYER_TWO_SPAWN_ROW * TILE_SUBDIVISION;
 
 export const PLAYER_BODY_BASE_FACING_DEG = 90;
 export const PLAYER_TURRET_BASE_FACING_RAD = Math.PI / 2;
 export const PLAYER_BODY_RING_CENTER = { x: 355.0, y: 245.5, w: 712, h: 783 };
-export const PLAYER_TURRET_CAP_CENTER = { x: 239.0, y: 259.5, w: 556, h: 1191 };
+export const PLAYER_TURRET_CAP_CENTER = { x: 312.0, y: 312.0, w: 611, h: 1176 };
 export const ENEMY_BODY_RING_CENTER = { x: 355.0, y: 245.5, w: 712, h: 783 };
 export const ENEMY_TURRET_CAP_CENTER = { x: 239.0, y: 259.5, w: 556, h: 1191 };
 export const TANKETTE_BODY_TURRET_ANCHOR = { x: 479.0, y: 489.0, w: 1024, h: 1024 };
@@ -76,22 +86,21 @@ export const LEVEL_WAVE_CONFIGS = [
 ];
 
 export const PATROL_ZONES = [
-  { minCol: 0, maxCol: 7, minRow: 0, maxRow: 9 },
-  { minCol: 8, maxCol: 17, minRow: 0, maxRow: 9 },
-  { minCol: 18, maxCol: 25, minRow: 0, maxRow: 9 },
-  { minCol: 0, maxCol: 9, minRow: 10, maxRow: 17 },
-  { minCol: 16, maxCol: 25, minRow: 10, maxRow: 17 },
-  { minCol: 4, maxCol: 21, minRow: 18, maxRow: 23 },
+  { minCol: 0, maxCol: Math.floor(GRID_WIDTH * 0.3) - 1, minRow: 0, maxRow: Math.floor(GRID_HEIGHT * 0.38) - 1 },
+  { minCol: Math.floor(GRID_WIDTH * 0.3), maxCol: Math.floor(GRID_WIDTH * 0.7) - 1, minRow: 0, maxRow: Math.floor(GRID_HEIGHT * 0.38) - 1 },
+  { minCol: Math.floor(GRID_WIDTH * 0.7), maxCol: GRID_WIDTH - 1, minRow: 0, maxRow: Math.floor(GRID_HEIGHT * 0.38) - 1 },
+  { minCol: 0, maxCol: Math.floor(GRID_WIDTH * 0.28), minRow: Math.floor(GRID_HEIGHT * 0.38), maxRow: Math.floor(GRID_HEIGHT * 0.7) - 1 },
+  { minCol: Math.floor(GRID_WIDTH * 0.72), maxCol: GRID_WIDTH - 1, minRow: Math.floor(GRID_HEIGHT * 0.38), maxRow: Math.floor(GRID_HEIGHT * 0.7) - 1 },
+  { minCol: Math.floor(GRID_WIDTH * 0.2), maxCol: Math.floor(GRID_WIDTH * 0.8) - 1, minRow: Math.floor(GRID_HEIGHT * 0.7), maxRow: GRID_HEIGHT - 3 },
 ];
 
 export const SETTINGS_TABS = [
   { key: "mode", label: "Modo" },
   { key: "controls", label: "Controles" },
-  { key: "mapGen", label: "Mapa / procgen" },
+  { key: "mapGen", label: "Mapa" },
   { key: "combat", label: "Combate" },
-  { key: "player", label: "Jugador" },
   { key: "enemyAi", label: "Enemigos / IA" },
-  { key: "meta", label: "Meta / debug" },
+  { key: "meta", label: "Debug" },
   { key: "turret", label: "Torreta" },
   { key: "presets", label: "Presets" },
 ];
@@ -102,7 +111,7 @@ export const SETTINGS_SCHEMA = [
     label: "Modo de juego",
     category: "mode",
     min: 0,
-    max: 1,
+    max: 3,
     step: 1,
     defaultValue: 0,
   },
@@ -165,7 +174,7 @@ export const SETTINGS_SCHEMA = [
     label: "Algoritmo de mapa",
     category: "mapGen",
     min: 0,
-    max: 2,
+    max: 3,
     step: 1,
     defaultValue: 0,
   },
@@ -397,7 +406,7 @@ export const SETTINGS_SCHEMA = [
   {
     key: "playerLives",
     label: "Vidas del jugador",
-    category: "player",
+    category: "combat",
     min: 1,
     max: 9,
     step: 1,

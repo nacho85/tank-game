@@ -1,0 +1,524 @@
+.viewport {
+  align-items: center;
+  background: #02110f;
+  display: flex;
+  height: 100dvh;
+  justify-content: center;
+  overflow: auto;
+  width: 100%;
+}
+
+.stage {
+  height: 100dvh;
+  position: relative;
+  width: min(calc(100dvh * 1.7777778), 100vw);
+}
+
+.background {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.overlay {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.menuBlock {
+  color: #454038;
+  left: 58.2%;
+  pointer-events: auto;
+  position: absolute;
+  top: 36.8%;
+  transform: translateX(-50%);
+  width: 30.8%;
+}
+
+.breadcrumb {
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.6rem, 0.82vw, 1.02rem);
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  margin-bottom: 2.8rem;
+  opacity: 0.78;
+  text-transform: uppercase;
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.72rem;
+}
+
+.menuItem {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(119, 103, 80, 0.16);
+  color: #3f3a33;
+  cursor: pointer;
+  display: flex;
+  font-family: "Courier New", "Courier Prime", Courier, "Liberation Mono", monospace;
+  font-size: clamp(1.44rem, 1.92vw, 2.72rem);
+  font-weight: 700;
+  justify-content: space-between;
+  letter-spacing: 0.06em;
+  line-height: 1.08;
+  padding: 0 0 0.42rem;
+  text-align: left;
+  text-transform: uppercase;
+  transition: color 140ms ease, transform 140ms ease, text-shadow 140ms ease;
+  width: 100%;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+  color: #8a6511;
+  outline: none;
+}
+
+.menuItemSelected {
+  color: #b78b1c;
+  text-shadow: 0 0 0.6px rgba(76, 46, 0, 0.5);
+  transform: translateX(0.28rem);
+}
+
+.chevron {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.8em;
+  padding-left: 0.75rem;
+}
+
+.footerRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.58rem;
+  margin-top: 1.2rem;
+}
+
+.controlsText,
+.statusText,
+.roomFooterText {
+  color: rgba(77, 69, 59, 0.92);
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.46rem, 0.68vw, 0.86rem);
+  line-height: 1.35;
+}
+
+.statusText {
+  min-height: 1.6em;
+}
+
+.createRoomOverlay {
+  inset: 0;
+  position: absolute;
+}
+
+.backButton {
+  background: rgba(246, 241, 228, 0.82);
+  border: 1px solid rgba(64, 55, 41, 0.28);
+  border-radius: 0.45rem;
+  color: #3f372b;
+  cursor: pointer;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.58rem, 0.72vw, 0.92rem);
+  font-weight: 700;
+  left: 13.5%;
+  padding: 0.48rem 0.72rem;
+  position: absolute;
+  top: 3.5%;
+  z-index: 4;
+}
+
+.boardTopArea {
+  box-sizing: border-box;
+  left: 13.5%;
+  position: absolute;
+  top: calc(22% - 35px);
+  width: 61%;
+  height: calc(36% + 35px);
+  overflow: hidden;
+  padding: 0.8% 2% 0.8%;
+}
+
+.formCard,
+.setupContent {
+  box-sizing: border-box;
+  color: #2f2a23;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+.formCard {
+  justify-content: center;
+  margin: 0 auto;
+  max-width: 44%;
+}
+
+.fieldBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.34rem;
+}
+
+.fieldBlock + .fieldBlock {
+  margin-top: 0.85rem;
+}
+
+.fieldLabel,
+.sectionTitle,
+.inlineLabel,
+.slotHeaderRow,
+.slotRole,
+.hostBadge {
+  color: #3d3529;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.64rem, 0.82vw, 0.96rem);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.textField,
+.selectField,
+.slotSelect,
+.chatInput {
+  appearance: none;
+  background: rgba(255, 253, 246, 0.72);
+  border: 1px solid rgba(69, 58, 45, 0.24);
+  border-radius: 0.28rem;
+  color: #2d271f;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.68rem, 0.86vw, 0.96rem);
+  line-height: 1.2;
+  min-width: 0;
+  padding: 0.42rem 0.56rem;
+}
+
+.primaryButton,
+.sendButton {
+  align-self: flex-start;
+  background: rgba(53, 49, 41, 0.9);
+  border: 0;
+  border-radius: 0.34rem;
+  color: #f7f0dc;
+  cursor: pointer;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.72rem, 0.88vw, 1rem);
+  font-weight: 700;
+  margin-top: 0.9rem;
+  padding: 0.52rem 0.92rem;
+  text-transform: uppercase;
+}
+
+.setupContent {
+  gap: 0.14rem;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.topSettingsGrid {
+  column-gap: 2rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  row-gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.compactSettingsRow {
+  column-gap: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex-shrink: 0;
+}
+
+.inlineField {
+  align-items: center;
+  display: grid;
+  gap: 0.3rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+}
+
+.inlineControl {
+  min-width: 0;
+}
+
+.readonlyValue {
+  color: #2f2a23;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.7rem, 0.88vw, 1rem);
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slotsSection {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.14rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.slotHeaderRow,
+.slotRow {
+  align-items: center;
+  column-gap: 0.58rem;
+  display: grid;
+  grid-template-columns: 1.7rem minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 0.95fr);
+}
+
+.slotHeaderRow {
+  opacity: 0.84;
+  padding: 0 0.22rem;
+}
+
+.slotsTable {
+  display: flex;
+  flex-direction: column;
+  gap: 0.14rem;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.slotRow {
+  background: rgba(255, 252, 244, 0.36);
+  border: 1px solid rgba(79, 69, 56, 0.16);
+  border-radius: 0.3rem;
+  padding: 0.14rem 0.26rem;
+  flex-shrink: 0;
+}
+
+.slotNameCell {
+  min-width: 0;
+}
+
+.slotName {
+  color: #2e271f;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.64rem, 0.78vw, 0.88rem);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slotRole {
+  color: rgba(64, 57, 46, 0.72);
+  font-size: clamp(0.5rem, 0.6vw, 0.68rem);
+}
+
+.colorPickerWrap {
+  position: relative;
+}
+
+.colorSwatchButton,
+.colorPaletteItem {
+  border: 1px solid rgba(56, 49, 38, 0.42);
+  border-radius: 0.22rem;
+  cursor: pointer;
+  height: 1.25rem;
+  width: 1.25rem;
+}
+
+.colorSwatchButton:disabled {
+  cursor: default;
+  opacity: 0.88;
+}
+
+.colorPalette {
+  background: rgba(255, 248, 236, 0.96);
+  border: 1px solid rgba(83, 71, 52, 0.26);
+  border-radius: 0.34rem;
+  box-shadow: 0 0.35rem 0.8rem rgba(0, 0, 0, 0.18);
+  display: grid;
+  gap: 0.28rem;
+  left: 0;
+  padding: 0.3rem;
+  position: absolute;
+  top: calc(100% + 0.22rem);
+  z-index: 6;
+}
+
+.slotSelect {
+  width: 100%;
+}
+
+.hostBadge {
+  font-size: clamp(0.58rem, 0.72vw, 0.82rem);
+}
+
+.boardBottomArea {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  left: 14.5%;
+  position: absolute;
+  top: 60%;
+  width: 59%;
+  height: 24%;
+  overflow: hidden;
+  padding: 1.2% 2% 1%;
+}
+
+.boardBottomAreaView {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  left: 13.5%;
+  position: absolute;
+  top: 56.5%;
+  width: 61%;
+  height: 31%;
+  overflow: hidden;
+  padding: 1.2% 2% 1%;
+}
+
+.chatMessages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0.14rem 0.28rem;
+}
+
+.chatMessage {
+  color: #342d25;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.58rem, 0.72vw, 0.82rem);
+  line-height: 1.28;
+}
+
+.chatAuthor {
+  font-weight: 700;
+}
+
+.chatComposer {
+  display: grid;
+  gap: 0.48rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  left: 15.2%;
+  position: absolute;
+  top: 56.2%;
+  width: 58%;
+  z-index: 4;
+}
+.fieldHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  button {
+    margin-top: -5px;
+  }
+}
+
+.sendButton {
+  align-self: stretch;
+  margin-top: 0;
+}
+
+.roomFooterText {
+  bottom: 5%;
+  left: 13.5%;
+  position: absolute;
+}
+
+.visuallyHidden {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+}
+
+@media (max-aspect-ratio: 16/10) {
+  .stage {
+    width: 100vw;
+  }
+
+  .menuBlock {
+    left: 59%;
+    top: 37.5%;
+    width: 32%;
+  }
+}
+
+
+.matchStartPanel {
+  align-items: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  left: 77.6%;
+  position: absolute;
+  top: 16.8%;
+  width: 12.8%;
+  z-index: 4;
+}
+
+.readyToggle {
+  align-items: center;
+  color: #3d3529;
+  display: flex;
+  gap: 0.4rem;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.54rem, 0.62vw, 0.78rem);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.readyCheckbox {
+  accent-color: #2f8e3d;
+  height: 0.88rem;
+  margin: 0;
+  width: 0.88rem;
+}
+
+.readyLabel {
+  line-height: 1.1;
+}
+
+.startMatchButton {
+  background: rgba(74, 67, 58, 0.85);
+  border: 1px solid rgba(53, 46, 38, 0.34);
+  border-radius: 0.34rem;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: not-allowed;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.58rem, 0.68vw, 0.82rem);
+  font-weight: 700;
+  min-height: 2.2rem;
+  padding: 0.45rem 0.55rem;
+  text-transform: uppercase;
+}
+
+.startMatchButtonReady {
+  background: #2f8e3d;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.countdownText {
+  color: #2f2a23;
+  font-family: "Courier New", Courier, monospace;
+  font-size: clamp(0.56rem, 0.64vw, 0.78rem);
+  font-weight: 700;
+  text-align: center;
+}
