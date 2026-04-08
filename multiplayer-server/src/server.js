@@ -1077,12 +1077,21 @@ function sendToClient(clientId, type, payload) {
   client.ws.send(JSON.stringify({ type, payload }));
 }
 
+function getLobbyFreeSlotCount(room) {
+  return room?.slots?.filter((slot) => (
+    slot
+    && !slot.clientId
+    && slot.kind !== "IA"
+    && slot.kind !== "Cerrado"
+  )).length || 0;
+}
+
 function lobbyRoomToSummary(room) {
   const humanCount = room.slots.filter((slot) => slot.clientId).length;
   const aiCount = room.slots.filter((slot) => slot.kind === "IA").length;
   const occupiedCount = humanCount + aiCount;
   const maxPlayers = room.slots.filter((slot) => slot.kind !== "Cerrado").length;
-  const freeSlots = room.slots.filter((slot) => slot.kind === "Abierto" && !slot.clientId).length;
+  const freeSlots = getLobbyFreeSlotCount(room);
   return {
     id: room.id,
     roomName: room.roomName,
