@@ -1019,6 +1019,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
   const localClientIdRef = useRef(localClientId);
   const isLocalHostRef = useRef(isLocalHost);
   const slotsRef = useRef(slots);
+  const createRequestIdRef = useRef(createRequestId || armPendingCreateRoomRequest());
   const fallbackLobby = useLobbySocket(playerName, setStatusText, !sharedLobby);
   const lobby = sharedLobby || fallbackLobby;
   const browserToken = getOrCreateOnlineBrowserToken();
@@ -1124,7 +1125,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
   }, [initialRoomId, initialIsHost, playerName]);
 
   useEffect(() => {
-    if (!initialIsHost || initialRoomId || roomId || autoCreateRequestedRef.current || !createRequestId) return;
+    if (!initialIsHost || initialRoomId || roomId || autoCreateRequestedRef.current || !createRequestIdRef.current) return;
 
     autoCreateRequestedRef.current = true;
     const nextSlots = buildInitialSlots(playerName).map((slot, index) => {
@@ -1135,7 +1136,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
 
     setStatusText(`Abriendo "${nextRoomName}"...`);
     lobby.send("create_room", {
-      createRequestId,
+      createRequestId: createRequestIdRef.current,
       roomName: nextRoomName,
       playerName,
       browserToken,
@@ -1146,7 +1147,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
       baseHits,
       slots: nextSlots,
     });
-  }, [initialIsHost, initialRoomId, roomId, playerName, roomName, browserToken, mode, density, rounds, lives, baseHits, createRequestId]);
+  }, [initialIsHost, initialRoomId, roomId, playerName, roomName, browserToken, mode, density, rounds, lives, baseHits]);
 
   useEffect(() => () => {
     if (countdownTimerRef.current) {
