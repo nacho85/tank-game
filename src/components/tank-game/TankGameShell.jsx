@@ -9,13 +9,13 @@ const MENUS = {
     title: "Centro de operaciones",
     subtitle: "Seleccioná un modo para continuar.",
     items: [
-      { label: "Un jugador", action: { type: "submenu", target: "singlePlayer" } },
+      { label: "Local", action: { type: "submenu", target: "singlePlayer" } },
       { label: "Multiplayer", action: { type: "submenu", target: "multiplayer" } },
       { label: "Configuración", action: { type: "submenu", target: "settings" } },
     ],
   },
   singlePlayer: {
-    title: "Un jugador",
+    title: "Local",
     subtitle: "Elegí cómo querés entrar al juego.",
     items: [
       { label: "Clásico", action: { type: "startGame", mode: "classic", label: "Clásico" } },

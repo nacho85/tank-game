@@ -1,4 +1,5 @@
 import { ONLINE_MESSAGE, normalizeWsUrl } from "../protocol";
+import { getOrCreateOnlineReconnectToken } from "../session";
 
 export function createOnlineSocketClient({
   url,
@@ -22,12 +23,17 @@ export function createOnlineSocketClient({
   return {
     connect() {
       const wsUrl = normalizeWsUrl(url || process.env.NEXT_PUBLIC_TANK_WS_URL);
+      const reconnectToken = getOrCreateOnlineReconnectToken();
       setState("conectando");
       socket = new WebSocket(wsUrl);
 
       socket.addEventListener("open", () => {
         setState("conectado");
-        send(ONLINE_MESSAGE.JOIN, { requestedMode: "online_2v2", requestedMapAlgorithm: mapAlgorithm });
+        send(ONLINE_MESSAGE.JOIN, {
+          requestedMode: "online_2v2",
+          requestedMapAlgorithm: mapAlgorithm,
+          reconnectToken,
+        });
       });
 
       socket.addEventListener("close", () => {
@@ -63,6 +69,9 @@ export function createOnlineSocketClient({
 
     disconnect() {
       if (socket) {
+        if (socket.readyState === WebSocket.OPEN) {
+          send(ONLINE_MESSAGE.LEAVE, {});
+        }
         socket.close();
         socket = null;
       }
@@ -76,6 +85,10 @@ export function createOnlineSocketClient({
 
     sendFire(payload = {}) {
       return send(ONLINE_MESSAGE.PLAYER_FIRED, payload);
+    },
+
+    sendRaw({ type, payload = {} } = {}) {
+      return send(type, payload);
     },
 
     consumeLatestSnapshot() {

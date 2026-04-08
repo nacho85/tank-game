@@ -11,7 +11,7 @@ export function createGameConfig(container) {
     backgroundColor: "#000000",
     pixelArt: false,
     antialias: true,
-    roundPixels: false,
+    roundPixels: true,
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,

@@ -1132,6 +1132,7 @@ function placeObstacles(level, localRandom, config = {}) {
 
 export function createOnline2v2Level(settings = {}) {
   const algorithmIndex = clamp(Math.round(Number(settings?.mapAlgorithm ?? settings?.survivalMapAlgorithm ?? 0)), 0, 3);
+  const densityMultiplier = clamp(Number(settings?.densityMultiplier ?? 1), 0.6, 1.8);
   const localRandom = Math.random;
   const floor = makeMatrix(TILE.GROUND, GRID_WIDTH, GRID_HEIGHT);
   const overlay = makeMatrix(null, GRID_WIDTH, GRID_HEIGHT);
@@ -1168,7 +1169,22 @@ export function createOnline2v2Level(settings = {}) {
     // 3: Archipelago — few, islands are small so don't clutter
     { structureCount: [6, 10], compoundChance: 0.65, clusterChance: 0.3, minSpacing: 4 },
   ];
-  placeObstacles(level, localRandom, obstacleConfigs[algorithmIndex] ?? obstacleConfigs[0]);
+  const baseObstacleConfig = obstacleConfigs[algorithmIndex] ?? obstacleConfigs[0];
+  const densityAdjustedObstacleConfig = {
+    ...baseObstacleConfig,
+    structureCount: [
+      Math.max(2, Math.round(baseObstacleConfig.structureCount[0] * densityMultiplier)),
+      Math.max(3, Math.round(baseObstacleConfig.structureCount[1] * densityMultiplier)),
+    ],
+    compoundChance: clamp(baseObstacleConfig.compoundChance * (0.92 + ((densityMultiplier - 1) * 0.25)), 0.35, 0.95),
+    clusterChance: clamp(baseObstacleConfig.clusterChance * (0.9 + ((densityMultiplier - 1) * 0.4)), 0.18, 0.92),
+    minSpacing: densityMultiplier > 1.15
+      ? Math.max(2, baseObstacleConfig.minSpacing - 1)
+      : densityMultiplier < 0.9
+        ? baseObstacleConfig.minSpacing + 1
+        : baseObstacleConfig.minSpacing,
+  };
+  placeObstacles(level, localRandom, densityAdjustedObstacleConfig);
   forceClearBushesOnWater(level);
   sanitizeBushes(level, 0);
   forceClearBushesOnWater(level);
@@ -1178,5 +1194,6 @@ export function createOnline2v2Level(settings = {}) {
     overlay: cloneMatrix(level.overlay),
     obstacles: cloneMatrix(level.obstacles),
     mapAlgorithm: algorithmIndex,
+    densityMultiplier,
   };
 }

@@ -9,6 +9,44 @@ import { bigCellCenterX, bigCellCenterY } from "../shared/levelGeneration";
 import { vectorLength } from "../shared/math";
 import { computeTankControlStep } from "../core/sim/tankController";
 
+const DEFAULT_BINDINGS = {
+  p1MoveUpKeyCode: Phaser.Input.Keyboard.KeyCodes.W,
+  p1MoveDownKeyCode: Phaser.Input.Keyboard.KeyCodes.S,
+  p1MoveLeftKeyCode: Phaser.Input.Keyboard.KeyCodes.A,
+  p1MoveRightKeyCode: Phaser.Input.Keyboard.KeyCodes.D,
+  p1AimUpKeyCode: Phaser.Input.Keyboard.KeyCodes.I,
+  p1AimDownKeyCode: Phaser.Input.Keyboard.KeyCodes.K,
+  p1AimLeftKeyCode: Phaser.Input.Keyboard.KeyCodes.J,
+  p1AimRightKeyCode: Phaser.Input.Keyboard.KeyCodes.L,
+  p1FireKeyCode: Phaser.Input.Keyboard.KeyCodes.SPACE,
+  p2MoveUpKeyCode: Phaser.Input.Keyboard.KeyCodes.UP,
+  p2MoveDownKeyCode: Phaser.Input.Keyboard.KeyCodes.DOWN,
+  p2MoveLeftKeyCode: Phaser.Input.Keyboard.KeyCodes.LEFT,
+  p2MoveRightKeyCode: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+  p2AimUpKeyCode: Phaser.Input.Keyboard.KeyCodes.NUMPAD_EIGHT,
+  p2AimDownKeyCode: Phaser.Input.Keyboard.KeyCodes.NUMPAD_FIVE,
+  p2AimLeftKeyCode: Phaser.Input.Keyboard.KeyCodes.NUMPAD_FOUR,
+  p2AimRightKeyCode: Phaser.Input.Keyboard.KeyCodes.NUMPAD_SIX,
+  p2FireKeyCode: Phaser.Input.Keyboard.KeyCodes.NUMPAD_ZERO,
+  p2JoinKeyCode: Phaser.Input.Keyboard.KeyCodes.P,
+};
+
+function getBindingKeyName(slot = 1, action = "MoveUp") {
+  return `p${slot}${action}KeyCode`;
+}
+
+function getBindingCode(scene, bindingKey) {
+  const configured = Number(scene.settings?.[bindingKey]);
+  if (!Number.isNaN(configured) && configured > 0) return configured;
+  return DEFAULT_BINDINGS[bindingKey] || 0;
+}
+
+function isBindingDown(scene, bindingKey) {
+  const code = getBindingCode(scene, bindingKey);
+  if (!code) return false;
+  return !!scene.bindingKeys?.[bindingKey]?.isDown;
+}
+
 export function getControlDeviceForSlot(scene, slot = 1) {
   if (slot === 2) {
     return Math.round(scene.settings?.playerTwoControlDevice || 0);
@@ -27,38 +65,20 @@ export function getGamepadSlotForPlayerSlot(slot = 1) {
 export function getPlayerKeyboardMoveInput(scene, slot = 1) {
   let x = 0;
   let y = 0;
-
-  if (slot === 2) {
-    if (scene.cursors.left.isDown) x -= 1;
-    if (scene.cursors.right.isDown) x += 1;
-    if (scene.cursors.up.isDown) y -= 1;
-    if (scene.cursors.down.isDown) y += 1;
-    return { x, y };
-  }
-
-  if (scene.keys.a.isDown) x -= 1;
-  if (scene.keys.d.isDown) x += 1;
-  if (scene.keys.w.isDown) y -= 1;
-  if (scene.keys.s.isDown) y += 1;
+  if (isBindingDown(scene, getBindingKeyName(slot, "MoveLeft"))) x -= 1;
+  if (isBindingDown(scene, getBindingKeyName(slot, "MoveRight"))) x += 1;
+  if (isBindingDown(scene, getBindingKeyName(slot, "MoveUp"))) y -= 1;
+  if (isBindingDown(scene, getBindingKeyName(slot, "MoveDown"))) y += 1;
   return { x, y };
 }
 
 export function getPlayerKeyboardAimInput(scene, slot = 1) {
   let x = 0;
   let y = 0;
-
-  if (slot === 2) {
-    if (scene.keys.numpad4.isDown) x -= 1;
-    if (scene.keys.numpad6.isDown) x += 1;
-    if (scene.keys.numpad8.isDown) y -= 1;
-    if (scene.keys.numpad5.isDown) y += 1;
-    return { x, y };
-  }
-
-  if (scene.cursors.left.isDown) x -= 1;
-  if (scene.cursors.right.isDown) x += 1;
-  if (scene.cursors.up.isDown) y -= 1;
-  if (scene.cursors.down.isDown) y += 1;
+  if (isBindingDown(scene, getBindingKeyName(slot, "AimLeft"))) x -= 1;
+  if (isBindingDown(scene, getBindingKeyName(slot, "AimRight"))) x += 1;
+  if (isBindingDown(scene, getBindingKeyName(slot, "AimUp"))) y -= 1;
+  if (isBindingDown(scene, getBindingKeyName(slot, "AimDown"))) y += 1;
   return { x, y };
 }
 
@@ -132,7 +152,7 @@ export function updateCoopText(scene) {
 export function tryJoinSecondPlayer(scene) {
   const usingKeyboard = scene.isKeyboardControlledSlot(2);
   const joinPressed = usingKeyboard
-    ? scene.keys.p.isDown
+    ? isBindingDown(scene, "p2JoinKeyCode")
     : scene.readPadButtonPressed(9, 0.35, 1);
   const latchKey = usingKeyboard ? "keyboard-p2" : 1;
   const wasPressed = !!scene.wasPadStartPressed[latchKey];
@@ -203,9 +223,7 @@ export function isControlledTankFirePressed(scene, tank) {
   const slot = tank?.controlSlot || 1;
   const padSlot = scene.getGamepadSlotForPlayerSlot(slot);
   const keyboardFire = scene.isKeyboardControlledSlot(slot)
-    ? slot === 2
-      ? scene.keys.numpad0.isDown
-      : scene.keys.space.isDown
+    ? isBindingDown(scene, getBindingKeyName(slot, "Fire"))
     : false;
   const fireDown =
     keyboardFire ||

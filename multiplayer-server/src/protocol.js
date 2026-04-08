@@ -13,13 +13,18 @@ export const MESSAGE = {
   JOINED_ROOM: "joined_room",
   ROOM_CLOSED: "room_closed",
   ROOM_CHAT: "room_chat",
+  START_MATCH: "start_match",
+  MATCH_STARTING: "match_starting",
+  UPDATE_MY_SLOT: "update_my_slot",
 
   // gameplay
   JOIN: "join",
+  LEAVE: "leave",
   WELCOME: "welcome",
   INPUT: "input",
   SNAPSHOT: "snapshot",
   ERROR: "error",
   PLAYER_FIRED: "player_fired",
   ROUND_START: "round_start",
+  PICKUP_POWER_UP: "pickup_power_up",
 };

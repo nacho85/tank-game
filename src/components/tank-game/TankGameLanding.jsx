@@ -1,34 +1,148 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./tank-game-landing.module.css";
+import {
+  claimOnlinePlayerName,
+  clearOnlineSession,
+  getOrCreateOnlineBrowserToken,
+  getOrCreateOnlineReconnectToken,
+  getSuggestedOnlinePlayerName,
+  readOnlineSession,
+  readStoredOnlinePlayerName,
+  releaseOnlinePlayerName,
+  updateOnlineSession,
+  writeStoredOnlinePlayerName,
+} from "@/game/phaser/online/session";
+import { normalizeWsUrl } from "@/game/phaser/online/protocol";
 
-const PLAYER_NAME_STORAGE_KEY = "bct-player-name";
 const SETTINGS_STORAGE_KEY = "tank-game-settings-v1";
 const AXIS_DEADZONE = 0.45;
 const NAV_REPEAT_MS = 190;
 const HEARTBEAT_MS = 5000;
 const CREATE_ROOM_BG = "/create-room-bg.png";
 const JOINED_ROOM_BG = "/create-room-bg-2.png";
+const GAMEPAD_FOCUSABLE_SELECTOR = [
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[role="button"][tabindex]:not([aria-disabled="true"])',
+].join(", ");
+let sharedLobbySocket = null;
+let sharedLobbyHeartbeatId = null;
+let sharedLobbyHandlers = {};
+let pendingCreateRoomRequestId = null;
+
+function armPendingCreateRoomRequest() {
+  pendingCreateRoomRequestId = `create-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return pendingCreateRoomRequestId;
+}
+
+function readPendingCreateRoomRequest() {
+  return pendingCreateRoomRequestId;
+}
+
+function clearPendingCreateRoomRequest() {
+  pendingCreateRoomRequestId = null;
+}
 
 const MENU_SCREENS = {
   root: {
     breadcrumb: "CENTRO DE OPERACIONES",
     items: [
-      { label: "Un jugador", next: "single" },
-      { label: "Multiplayer", next: "multi" },
+      { label: "Local", next: "single" },
+      { label: "Multiplayer", action: "browseRooms" },
       { label: "Configuración", next: "config" },
     ],
     status: "Listo para desplegar.",
   },
   single: {
-    breadcrumb: "CENTRO DE OPERACIONES / UN JUGADOR",
+    breadcrumb: "CENTRO DE OPERACIONES / LOCAL",
     items: [
-      { label: "Clásico", action: "play" },
-      { label: "Survival", action: "play" },
+      { label: "Clásico", action: "play", gameMode: "classic" },
+      { label: "Survival", next: "survivalDifficulty" },
       { label: "Volver", back: true },
     ],
     status: "Seleccioná un modo individual.",
+  },
+  survivalDifficulty: {
+    breadcrumb: "CENTRO DE OPERACIONES / LOCAL / SURVIVAL / DIFICULTAD",
+    items: [
+      {
+        label: "Fácil",
+        next: "survivalMode",
+        localSettings: {
+          enemyBehaviorPreset: 3,
+          enemyAggression: 70,
+          enemyNavigationSkill: 80,
+          enemyBreakBricks: 64,
+          enemyRecoverySkill: 78,
+          enemyFireDiscipline: 70,
+          enemyShotFrequency: 62,
+          enemyAimErrorDeg: 8,
+          enemyRushMode: 1,
+        },
+      },
+      {
+        label: "Normal",
+        next: "survivalMode",
+        localSettings: {
+          enemyBehaviorPreset: 3,
+          enemyAggression: 74,
+          enemyNavigationSkill: 84,
+          enemyBreakBricks: 68,
+          enemyRecoverySkill: 80,
+          enemyFireDiscipline: 72,
+          enemyShotFrequency: 64,
+          enemyAimErrorDeg: 7,
+          enemyRushMode: 1,
+        },
+      },
+      {
+        label: "Dificil",
+        next: "survivalMode",
+        localSettings: {
+          enemyBehaviorPreset: 3,
+          enemyAggression: 78,
+          enemyNavigationSkill: 88,
+          enemyBreakBricks: 72,
+          enemyRecoverySkill: 82,
+          enemyFireDiscipline: 76,
+          enemyShotFrequency: 68,
+          enemyAimErrorDeg: 6,
+          enemyRushMode: 2,
+        },
+      },
+      {
+        label: "Massacre",
+        next: "survivalMode",
+        localSettings: {
+          enemyBehaviorPreset: 3,
+          enemyAggression: 82,
+          enemyNavigationSkill: 91,
+          enemyBreakBricks: 76,
+          enemyRecoverySkill: 85,
+          enemyFireDiscipline: 80,
+          enemyShotFrequency: 72,
+          enemyAimErrorDeg: 5,
+          enemyRushMode: 2,
+        },
+      },
+      { label: "Volver", back: true, backTo: "single" },
+    ],
+    status: "Elegi cuan despiertos queres a los enemigos.",
+  },
+  survivalMode: {
+    breadcrumb: "CENTRO DE OPERACIONES / LOCAL / SURVIVAL / MODO",
+    items: [
+      { label: "Lago", action: "play", gameMode: "survival", localSettings: { survivalMapAlgorithm: 0 } },
+      { label: "Río", action: "play", gameMode: "survival", localSettings: { survivalMapAlgorithm: 1 } },
+      { label: "Isla abierta", action: "play", gameMode: "survival", localSettings: { survivalMapAlgorithm: 2 } },
+      { label: "Archipiélago", action: "play", gameMode: "survival", localSettings: { survivalMapAlgorithm: 3 } },
+      { label: "Volver", back: true, backTo: "survivalDifficulty" },
+    ],
+    status: "Elegí el tipo de mapa para Survival.",
   },
   multi: {
     breadcrumb: "CENTRO DE OPERACIONES / MULTIPLAYER",
@@ -56,13 +170,119 @@ const ROUND_OPTIONS = ["6", "10"];
 const LIVES_OPTIONS = ["1", "3", "5"];
 const BASE_HITS_OPTIONS = ["1", "3", "5"];
 const SLOT_KIND_OPTIONS = ["Abierto", "IA", "Cerrado"];
-const SLOT_TEAM_OPTIONS = ["Azar", "Equipo 1", "Equipo 2"];
+const AI_DIFFICULTY_OPTIONS = ["Facil", "Normal", "Dificil", "Massacre"];
+const DEFAULT_PLAYER_COLOR = "#d8b13a";
+const RANDOM_PLAYER_COLOR = "Azar";
+const COLOR_PALETTE = [
+  "#d8b13a", "#f1c85c", "#f28b50", "#d4675f", "#b64a44", "#8d3d3d",
+  "#c96f96", "#a95bd4", "#6d78e0", "#436dad", "#5ca9ff", "#4db9bf",
+  "#49a87b", "#5f9b5b", "#7db55c", "#93c75d", "#d4d97a", "#9f8b6b",
+  "#cfc6b8", "#ffffff", "#7c7c7c", "#3f3f46", "#1f1f23", "#111827",
+];
+const UNASSIGNED_TEAM = "-";
+const TEAM_ONE = "1";
+const TEAM_TWO = "2";
+const SLOT_TEAM_OPTIONS = [UNASSIGNED_TEAM, TEAM_ONE, TEAM_TWO];
+const PLAYABLE_TEAM_OPTIONS = [TEAM_ONE, TEAM_TWO];
+const TEAM_CAPACITY = 2;
 const SLOT_COLORS = [
-  { name: "Azar", swatch: "linear-gradient(135deg, #e8d993 0%, #8fb2d9 50%, #c36a5b 100%)" },
-  { name: "Amarillo", swatch: "#d8b13a" },
-  { name: "Verde", swatch: "#4f8f49" },
-  { name: "Rojo", swatch: "#b64a44" },
-  { name: "Azul", swatch: "#436dad" },
+  { name: "Amarillo", swatch: "#d8b13a", previewSrc: "/tank-game/player-body-yellow-V2.png", previewFilter: "none" },
+  { name: "Verde", swatch: "#5f9b5b", previewSrc: "/tank-game/player-body-yellow-V2.png", previewFilter: "hue-rotate(78deg) saturate(1.1) brightness(0.92)" },
+  { name: "Rojo", swatch: "#d4675f", previewSrc: "/tank-game/player-body-yellow-V2.png", previewFilter: "sepia(1) saturate(3.8) hue-rotate(-28deg) brightness(1.02)" },
+  { name: "Azul", swatch: "#6d9fe0", previewSrc: "/tank-game/player-body-yellow-V2.png", previewFilter: "sepia(0.9) saturate(3.2) hue-rotate(130deg) brightness(1.05)" },
+];
+const AI_CELEBRITY_NAMES = [
+  "Messi",
+  "Maradona",
+  "Ronaldo",
+  "Pele",
+  "Neymar",
+  "Zidane",
+  "Ronaldinho",
+  "Beckham",
+  "Mbappe",
+  "Cruyff",
+  "Federer",
+  "Nadal",
+  "Djokovic",
+  "Jordan",
+  "Kobe",
+  "Ali",
+  "Tyson",
+  "Bolt",
+  "Senna",
+  "Fangio",
+  "Madonna",
+  "Mozart",
+  "Gandhi",
+  "Mandela",
+  "Frida",
+  "Borges",
+  "Picasso",
+  "Dalai",
+  "Platon",
+  "Socrates",
+  "Tesla",
+  "Newton",
+  "Darwin",
+  "Galileo",
+  "DaVinci",
+  "Einstein",
+  "Napoleon",
+  "Cleopatra",
+  "Tutankamon",
+  "Asterix",
+  "Obelix",
+  "Shrek",
+  "Homer",
+  "Yoda",
+  "Zelda",
+  "Rocky",
+  "Conan",
+  "Neo",
+  "Draco",
+  "Euclides",
+  "Rambo",
+  "Mulan",
+  "Simba",
+  "Genie",
+  "Sonic",
+  "Mario",
+  "Luigi",
+  "Kirby",
+  "Crash",
+  "Spyro",
+  "Kratos",
+  "Subzero",
+  "Raiden",
+  "Goku",
+  "Vegeta",
+  "Naruto",
+  "Sasuke",
+  "Luffy",
+  "Nami",
+  "Totoro",
+  "Akira",
+  "Amelie",
+  "Bambi",
+  "Dumbo",
+  "Stitch",
+  "Tarzan",
+  "Bowie",
+  "Socrates",
+  "Prince",
+  "Adele",
+  "Bono",
+  "Cher",
+  "Elvis",
+  "Batman",
+  "Superman",
+  "Joker",
+  "Thanos",
+  "Loki",
+  "Thor",
+  "Hulk",
+  "Tilín",
 ];
 
 function isTypingTarget(target) {
@@ -71,25 +291,253 @@ function isTypingTarget(target) {
   return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
 }
 
+function getGamepadFocusableElements(root) {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll(GAMEPAD_FOCUSABLE_SELECTOR)).filter((node) => {
+    if (!(node instanceof HTMLElement)) return false;
+    if (node.hidden) return false;
+    if (node.getAttribute("aria-hidden") === "true") return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    return true;
+  });
+}
+
+function focusGamepadElement(root, nextIndex) {
+  const elements = getGamepadFocusableElements(root);
+  if (!elements.length) return false;
+  const clampedIndex = ((nextIndex % elements.length) + elements.length) % elements.length;
+  elements[clampedIndex]?.focus?.();
+  return true;
+}
+
+function triggerGamepadActivation(node) {
+  if (!(node instanceof HTMLElement)) return;
+  const tag = node.tagName?.toLowerCase();
+  if (tag === "input") {
+    const inputType = String(node.getAttribute("type") || "").toLowerCase();
+    if (inputType === "checkbox" || inputType === "radio" || inputType === "button") {
+      node.click?.();
+      return;
+    }
+  }
+  if (tag === "button" || tag === "select" || node.getAttribute("role") === "button") {
+    node.click?.();
+    node.focus?.();
+    return;
+  }
+  node.focus?.();
+}
+
+function stepFocusedSelect(node, direction) {
+  if (!(node instanceof HTMLSelectElement)) return false;
+  const nextIndex = node.selectedIndex + direction;
+  if (nextIndex < 0 || nextIndex >= node.options.length) return false;
+  node.selectedIndex = nextIndex;
+  node.dispatchEvent(new Event("input", { bubbles: true }));
+  node.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
+function useGamepadMenuNavigation({ enabled, rootRef, onBack }) {
+  const lastNavAtRef = useRef(0);
+  const lastVerticalRef = useRef(0);
+  const lastHorizontalRef = useRef(0);
+  const lastAcceptPressedRef = useRef(false);
+  const lastBackPressedRef = useRef(false);
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    let frameId = 0;
+    const step = () => {
+      const root = rootRef.current;
+      const pads = navigator.getGamepads?.() ?? [];
+      const pad = pads.find(Boolean);
+      const now = performance.now();
+
+      if (!root || !pad) {
+        initializedRef.current = false;
+        lastVerticalRef.current = 0;
+        lastHorizontalRef.current = 0;
+        lastAcceptPressedRef.current = false;
+        lastBackPressedRef.current = false;
+        frameId = window.requestAnimationFrame(step);
+        return;
+      }
+
+      const focusables = getGamepadFocusableElements(root);
+      if (focusables.length) {
+        const activeElement = document.activeElement;
+        const currentIndex = focusables.indexOf(activeElement);
+        if (currentIndex === -1) {
+          focusGamepadElement(root, 0);
+        }
+
+        const axisX = pad.axes?.[0] ?? 0;
+        const axisY = pad.axes?.[1] ?? 0;
+        const rightPressed = Boolean(pad.buttons?.[15]?.pressed);
+        const leftPressed = Boolean(pad.buttons?.[14]?.pressed);
+        const downPressed = Boolean(pad.buttons?.[13]?.pressed);
+        const upPressed = Boolean(pad.buttons?.[12]?.pressed);
+        const acceptPressed = Boolean(pad.buttons?.[0]?.pressed);
+        const backPressed = Boolean(pad.buttons?.[1]?.pressed || pad.buttons?.[9]?.pressed);
+
+        if (!initializedRef.current) {
+          initializedRef.current = true;
+          lastNavAtRef.current = now;
+          lastVerticalRef.current = 0;
+          lastHorizontalRef.current = 0;
+          lastAcceptPressedRef.current = acceptPressed;
+          lastBackPressedRef.current = backPressed;
+          frameId = window.requestAnimationFrame(step);
+          return;
+        }
+
+        let verticalIntent = 0;
+        if (axisY > AXIS_DEADZONE || downPressed) verticalIntent = 1;
+        if (axisY < -AXIS_DEADZONE || upPressed) verticalIntent = -1;
+
+        let horizontalIntent = 0;
+        if (axisX > AXIS_DEADZONE || rightPressed) horizontalIntent = 1;
+        if (axisX < -AXIS_DEADZONE || leftPressed) horizontalIntent = -1;
+
+        const focusedNode = document.activeElement;
+        const canRepeat = now - lastNavAtRef.current > NAV_REPEAT_MS;
+
+        if (verticalIntent !== 0 && (lastVerticalRef.current !== verticalIntent || canRepeat)) {
+          const baseIndex = Math.max(0, focusables.indexOf(focusedNode));
+          focusGamepadElement(root, baseIndex + verticalIntent);
+          lastNavAtRef.current = now;
+        }
+
+        if (horizontalIntent !== 0 && (lastHorizontalRef.current !== horizontalIntent || canRepeat)) {
+          const handledSelect = stepFocusedSelect(focusedNode, horizontalIntent);
+          if (!handledSelect) {
+            const baseIndex = Math.max(0, focusables.indexOf(focusedNode));
+            focusGamepadElement(root, baseIndex + horizontalIntent);
+          }
+          lastNavAtRef.current = now;
+        }
+
+        if (acceptPressed && !lastAcceptPressedRef.current && now - lastNavAtRef.current > 120) {
+          triggerGamepadActivation(document.activeElement);
+          lastNavAtRef.current = now;
+        }
+
+        if (backPressed && !lastBackPressedRef.current && now - lastNavAtRef.current > 120) {
+          onBack?.();
+          lastNavAtRef.current = now;
+        }
+
+        lastVerticalRef.current = verticalIntent;
+        lastHorizontalRef.current = horizontalIntent;
+        lastAcceptPressedRef.current = acceptPressed;
+        lastBackPressedRef.current = backPressed;
+      }
+
+      frameId = window.requestAnimationFrame(step);
+    };
+
+    frameId = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [enabled, onBack, rootRef]);
+}
+
 function getColorSwatch(colorName) {
-  return SLOT_COLORS.find((item) => item.name === colorName)?.swatch ?? SLOT_COLORS[0].swatch;
+  if (colorName === RANDOM_PLAYER_COLOR) return "linear-gradient(135deg, #e8d993 0%, #8fb2d9 50%, #c36a5b 100%)";
+  if (typeof colorName === "string" && /^#[0-9a-f]{6}$/i.test(colorName.trim())) return colorName.trim();
+  return SLOT_COLORS.find((item) => item.name === colorName)?.swatch ?? DEFAULT_PLAYER_COLOR;
+}
+
+function getColorOption(colorName) {
+  return SLOT_COLORS.find((item) => item.name === colorName) ?? SLOT_COLORS[0];
+}
+
+function normalizeCustomColor(value) {
+  const normalized = String(value || "").trim();
+  if (normalized === RANDOM_PLAYER_COLOR) return RANDOM_PLAYER_COLOR;
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : DEFAULT_PLAYER_COLOR;
 }
 
 function getSocketUrl() {
+  const configuredUrl = process.env.NEXT_PUBLIC_TANK_WS_URL;
+  if (configuredUrl?.trim()) return normalizeWsUrl(configuredUrl);
   if (typeof window === "undefined") return "ws://localhost:3001";
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.hostname}:3001`;
+  return normalizeWsUrl(`${protocol}//${window.location.hostname}:3001`);
+}
+
+function normalizeAiDifficulty(value) {
+  return AI_DIFFICULTY_OPTIONS.includes(value) ? value : "Normal";
+}
+
+function isAiCelebrityName(value) {
+  return AI_CELEBRITY_NAMES.includes(String(value || "").trim());
+}
+
+function pickRandomAiCelebrityName(slots, targetSlotId) {
+  const usedNames = new Set(
+    (slots || [])
+      .filter((slot) => slot?.id !== targetSlotId && slot?.kind === "IA" && isAiCelebrityName(slot?.label))
+      .map((slot) => String(slot.label).trim()),
+  );
+  const availableNames = AI_CELEBRITY_NAMES.filter((name) => !usedNames.has(name));
+  const pool = availableNames.length ? availableNames : AI_CELEBRITY_NAMES;
+  return pool[Math.floor(Math.random() * pool.length)] || "Ronaldo";
+}
+
+function normalizeSlotsWithAiIdentity(slots) {
+  return slots.map((slot, index) => {
+    if (slot.clientId || slot.isHost) return { ...slot, aiDifficulty: normalizeAiDifficulty(slot.aiDifficulty) };
+
+    if (slot.kind === "IA") {
+      const celebrityName = isAiCelebrityName(slot.label)
+        ? String(slot.label).trim()
+        : pickRandomAiCelebrityName(slots, slot.id);
+      return {
+        ...slot,
+        label: celebrityName,
+        role: `IA ${index + 1}`,
+        aiDifficulty: normalizeAiDifficulty(slot.aiDifficulty),
+      };
+    }
+
+    return {
+      ...slot,
+      label: slot.baseRole || slot.role || `Slot ${index + 1}`,
+      role: slot.baseRole || slot.role || `Slot ${index + 1}`,
+      aiDifficulty: normalizeAiDifficulty(slot.aiDifficulty),
+    };
+  });
+}
+
+function getStoredLobbySession() {
+  const savedSession = readOnlineSession();
+  if (!savedSession?.roomId || savedSession?.inMatch) return null;
+  return {
+    roomId: savedSession.roomId,
+    isHost: !!savedSession.isHost,
+  };
+}
+
+function getDefaultRoomName(playerName) {
+  const safeName = String(playerName || "").trim() || "Player1";
+  return `Sala de ${safeName}`;
 }
 
 function buildInitialSlots(playerName) {
-  return [
+  return normalizeSlotsWithAiIdentity([
     {
       id: "host",
       label: playerName || "Player1",
+      baseRole: "Anfitrion",
       role: "Anfitrión",
       kind: "Jugador",
-      color: "Azar",
-      team: "Equipo 1",
+      color: RANDOM_PLAYER_COLOR,
+      team: UNASSIGNED_TEAM,
+      aiDifficulty: "Normal",
       locked: true,
       isHost: true,
       isReady: false,
@@ -99,19 +547,62 @@ function buildInitialSlots(playerName) {
       id: `slot-${index + 2}`,
       label: `Slot ${index + 2}`,
       role: `Slot ${index + 2}`,
+      baseRole: `Slot ${index + 2}`,
       kind: "Abierto",
-      color: "Azar",
-      team: "Azar",
+      color: RANDOM_PLAYER_COLOR,
+      team: UNASSIGNED_TEAM,
+      aiDifficulty: "Normal",
       locked: false,
       isHost: false,
       isReady: false,
       clientId: null,
     })),
-  ];
+  ]);
 }
 
 function getOccupiedCount(slots) {
   return slots.filter((slot) => slot.clientId || slot.kind === "IA").length;
+}
+
+function isTeamCountingSlot(slot) {
+  if (!slot) return false;
+  if (slot.kind === "Cerrado") return false;
+  return slot.team === TEAM_ONE || slot.team === TEAM_TWO;
+}
+
+function getTeamCounts(slots, excludeSlotId = null) {
+  return slots.reduce((counts, slot) => {
+    if (!isTeamCountingSlot(slot)) return counts;
+    if (slot.id === excludeSlotId) return counts;
+    if (slot.team === TEAM_ONE) counts.team1 += 1;
+    if (slot.team === TEAM_TWO) counts.team2 += 1;
+    return counts;
+  }, { team1: 0, team2: 0 });
+}
+
+function getAvailableTeamsForSlot(slots, slotId = null) {
+  const counts = getTeamCounts(slots, slotId);
+  return PLAYABLE_TEAM_OPTIONS.filter((team) => (
+    team === TEAM_ONE ? counts.team1 < TEAM_CAPACITY : counts.team2 < TEAM_CAPACITY
+  ));
+}
+
+function getTeamOptionsForSlot(slots, slot) {
+  if (!slot) return SLOT_TEAM_OPTIONS;
+
+  const availableTeams = getAvailableTeamsForSlot(slots, slot.id);
+  const options = [UNASSIGNED_TEAM];
+
+  availableTeams.forEach((team) => {
+    if (!options.includes(team)) options.push(team);
+  });
+
+  return options;
+}
+
+function getEffectiveSlotTeamValue(slots, slot) {
+  const options = getTeamOptionsForSlot(slots, slot);
+  return options.includes(slot?.team) ? slot.team : UNASSIGNED_TEAM;
 }
 
 function InlineSetting({ label, children }) {
@@ -133,6 +624,7 @@ function ReadonlySetting({ label, value }) {
 }
 
 function ColorPicker({ disabled = false, value, onChange, open, onToggle, onClose }) {
+  const normalizedValue = normalizeCustomColor(value);
   return (
     <div className={styles.colorPickerWrap}>
       <button
@@ -142,54 +634,102 @@ function ColorPicker({ disabled = false, value, onChange, open, onToggle, onClos
           if (disabled) return;
           onToggle();
         }}
-        style={{ background: getColorSwatch(value) }}
+        style={{ background: getColorSwatch(normalizedValue) }}
         type="button"
       >
-        <span className={styles.visuallyHidden}>{value}</span>
+        <span className={styles.visuallyHidden}>{normalizedValue}</span>
       </button>
 
       {open ? (
         <div className={styles.colorPalette}>
-          {SLOT_COLORS.map((option) => (
+          <button
+            className={`${styles.colorPaletteItem} ${styles.colorPaletteRandom}`}
+            onClick={() => {
+              onChange(RANDOM_PLAYER_COLOR);
+              onClose();
+            }}
+            style={{ background: getColorSwatch(RANDOM_PLAYER_COLOR) }}
+            type="button"
+          >
+            <span className={styles.visuallyHidden}>{RANDOM_PLAYER_COLOR}</span>
+          </button>
+          {COLOR_PALETTE.map((option) => (
             <button
               className={styles.colorPaletteItem}
-              key={option.name}
+              key={option}
               onClick={() => {
-                onChange(option.name);
+                onChange(option);
                 onClose();
               }}
-              style={{ background: option.swatch }}
+              style={{ background: option }}
               type="button"
             >
-              <span className={styles.visuallyHidden}>{option.name}</span>
+              <span className={styles.visuallyHidden}>{option}</span>
             </button>
           ))}
+          <label className={styles.colorPaletteCustom}>
+            <span className={styles.colorPaletteCustomLabel}>Mas</span>
+            <input
+              className={styles.colorPaletteNative}
+              onChange={(event) => onChange(normalizeCustomColor(event.target.value))}
+              type="color"
+              value={normalizedValue}
+            />
+          </label>
         </div>
       ) : null}
     </div>
   );
 }
 
-function useLobbySocket(playerName, onStatusText) {
+function useLobbySocket(playerName, onStatusText, autoDisconnect = true) {
   const socketRef = useRef(null);
-  const handlersRef = useRef({});
-  const heartbeatRef = useRef(null);
+  const playerNameRef = useRef(playerName);
+  const statusTextHandlerRef = useRef(onStatusText);
 
-  const connect = () => {
-    const existing = socketRef.current;
+  useEffect(() => {
+    playerNameRef.current = playerName;
+  }, [playerName]);
+
+  useEffect(() => {
+    statusTextHandlerRef.current = onStatusText;
+  }, [onStatusText]);
+
+  const disconnect = useCallback(() => {
+    if (sharedLobbyHeartbeatId) {
+      window.clearInterval(sharedLobbyHeartbeatId);
+      sharedLobbyHeartbeatId = null;
+    }
+    try {
+      sharedLobbySocket?.close();
+    } catch {
+      // noop
+    } finally {
+      sharedLobbySocket = null;
+      socketRef.current = null;
+    }
+  }, []);
+
+  const connect = useCallback(() => {
+    const existing = sharedLobbySocket;
     if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) {
+      socketRef.current = existing;
       return existing;
     }
 
-    const ws = new WebSocket(getSocketUrl());
+    const socketUrl = getSocketUrl();
+    const ws = new WebSocket(socketUrl);
+    const reconnectToken = getOrCreateOnlineReconnectToken();
+    const browserToken = getOrCreateOnlineBrowserToken();
+    sharedLobbySocket = ws;
     socketRef.current = ws;
 
     ws.addEventListener("open", () => {
-      ws.send(JSON.stringify({ type: "connect_lobby", payload: { playerName } }));
-      if (heartbeatRef.current) window.clearInterval(heartbeatRef.current);
-      heartbeatRef.current = window.setInterval(() => {
+      ws.send(JSON.stringify({ type: "connect_lobby", payload: { playerName: playerNameRef.current, reconnectToken, browserToken } }));
+      if (sharedLobbyHeartbeatId) window.clearInterval(sharedLobbyHeartbeatId);
+      sharedLobbyHeartbeatId = window.setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "connect_lobby", payload: { playerName } }));
+          ws.send(JSON.stringify({ type: "connect_lobby", payload: { playerName: playerNameRef.current, reconnectToken, browserToken } }));
         }
       }, HEARTBEAT_MS);
     });
@@ -197,7 +737,7 @@ function useLobbySocket(playerName, onStatusText) {
     ws.addEventListener("message", (event) => {
       try {
         const message = JSON.parse(String(event.data));
-        const handler = handlersRef.current[message.type];
+        const handler = sharedLobbyHandlers[message.type];
         if (handler) handler(message.payload);
       } catch {
         // noop
@@ -205,51 +745,108 @@ function useLobbySocket(playerName, onStatusText) {
     });
 
     ws.addEventListener("close", () => {
-      if (heartbeatRef.current) {
-        window.clearInterval(heartbeatRef.current);
-        heartbeatRef.current = null;
+      if (sharedLobbyHeartbeatId) {
+        window.clearInterval(sharedLobbyHeartbeatId);
+        sharedLobbyHeartbeatId = null;
+      }
+      if (sharedLobbySocket === ws) {
+        sharedLobbySocket = null;
+      }
+      if (socketRef.current === ws) {
+        socketRef.current = null;
       }
     });
 
     ws.addEventListener("error", () => {
-      onStatusText?.("No se pudo conectar con el lobby multiplayer.");
+      statusTextHandlerRef.current?.(`No se pudo conectar con el lobby multiplayer (${socketUrl}).`);
     });
 
     return ws;
-  };
+  }, []);
 
-  const send = (type, payload) => {
+  const send = useCallback((type, payload) => {
     const ws = connect();
     const emit = () => ws.send(JSON.stringify({ type, payload }));
     if (ws.readyState === WebSocket.OPEN) emit();
     else ws.addEventListener("open", emit, { once: true });
-  };
+  }, [connect]);
 
-  const registerHandlers = (handlers) => {
-    handlersRef.current = handlers;
-  };
-
-  useEffect(() => () => {
-    if (heartbeatRef.current) window.clearInterval(heartbeatRef.current);
-    try {
-      socketRef.current?.close();
-    } catch {
-      // noop
-    }
+  const registerHandlers = useCallback((handlers) => {
+    sharedLobbyHandlers = handlers || {};
   }, []);
 
-  return { connect, send, socketRef, registerHandlers };
+  useEffect(() => {
+    if (!autoDisconnect) return undefined;
+    return () => disconnect();
+  }, [autoDisconnect, disconnect]);
+
+  return useMemo(() => ({
+    connect,
+    disconnect,
+    send,
+    socketRef,
+    registerHandlers,
+  }), [connect, disconnect, send, registerHandlers]);
 }
 
-function BrowseRoomsScreen({ playerName, onBack, onJoinRoom, setStatusText }) {
+function BrowseRoomsScreen({ lobby: sharedLobby = null, playerName, onBack, onCreateRoom, onJoinRoom, onPlayerNameChange, setStatusText }) {
+  const screenRef = useRef(null);
   const [rooms, setRooms] = useState([]);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [selectedRoom, setSelectedRoom] = useState(null);
-  const lobby = useLobbySocket(playerName, setStatusText);
+  const fallbackLobby = useLobbySocket(playerName, setStatusText, !sharedLobby);
+  const lobby = sharedLobby || fallbackLobby;
+  const selectedRoomIdRef = useRef(null);
+
+  useEffect(() => {
+    selectedRoomIdRef.current = selectedRoomId;
+  }, [selectedRoomId]);
+
+  useEffect(() => {
+    const focusId = window.requestAnimationFrame(() => {
+      const root = screenRef.current;
+      if (!root) return;
+      const focusables = getGamepadFocusableElements(root);
+      const firstInteractive = focusables.find((node) => {
+        const text = node?.textContent?.trim?.() || "";
+        return text !== "← Volver";
+      }) || focusables[0];
+      firstInteractive?.focus?.();
+    });
+    return () => window.cancelAnimationFrame(focusId);
+  }, []);
+
+  useEffect(() => {
+    const root = screenRef.current;
+    if (!root || !rooms.length) return;
+    const active = document.activeElement;
+    if (active && root.contains(active)) return;
+    const focusId = window.requestAnimationFrame(() => {
+      const focusables = getGamepadFocusableElements(root);
+      const firstRoom = focusables.find((node) => node.classList?.contains?.(styles.browseRoomRow));
+      (firstRoom || focusables[0])?.focus?.();
+    });
+    return () => window.cancelAnimationFrame(focusId);
+  }, [rooms]);
 
   useEffect(() => {
     lobby.registerHandlers({
-      room_list: (payload) => setRooms(payload?.rooms || []),
+      room_list: (payload) => {
+        const nextRooms = payload?.rooms || [];
+        setRooms(nextRooms);
+        if (!nextRooms.length) {
+          setSelectedRoom(null);
+          setSelectedRoomId(null);
+          return;
+        }
+        const nextRoomId = nextRooms.some((room) => room.id === selectedRoomIdRef.current)
+          ? selectedRoomIdRef.current
+          : nextRooms[0]?.id || null;
+        if (nextRoomId && nextRoomId !== selectedRoomIdRef.current) {
+          setSelectedRoomId(nextRoomId);
+          lobby.send("list_rooms", { roomId: nextRoomId });
+        }
+      },
       room_detail: (payload) => {
         setSelectedRoom(payload || null);
         if (payload?.id) setSelectedRoomId(payload.id);
@@ -263,6 +860,25 @@ function BrowseRoomsScreen({ playerName, onBack, onJoinRoom, setStatusText }) {
     });
     lobby.connect();
     lobby.send("list_rooms", {});
+
+    function handleVisibilityRefresh() {
+      if (document.visibilityState !== "visible") return;
+      lobby.send("list_rooms", {});
+      if (selectedRoomIdRef.current) lobby.send("list_rooms", { roomId: selectedRoomIdRef.current });
+    }
+
+    const pollId = window.setInterval(() => {
+      lobby.send("list_rooms", {});
+      if (selectedRoomIdRef.current) lobby.send("list_rooms", { roomId: selectedRoomIdRef.current });
+    }, 2000);
+
+    window.addEventListener("focus", handleVisibilityRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+    return () => {
+      window.clearInterval(pollId);
+      window.removeEventListener("focus", handleVisibilityRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+    };
   }, []);
 
   function refresh() {
@@ -272,26 +888,41 @@ function BrowseRoomsScreen({ playerName, onBack, onJoinRoom, setStatusText }) {
   }
 
   function showRoom(roomId) {
+    if (!roomId) return;
     setSelectedRoomId(roomId);
     lobby.send("list_rooms", { roomId });
   }
 
   function joinSelected(roomId) {
+    if (!roomId) return;
     setStatusText("Uniéndote a la sala...");
     onJoinRoom?.({ roomId, isHost: false });
   }
 
+  useGamepadMenuNavigation({
+    enabled: true,
+    rootRef: screenRef,
+    onBack,
+  });
+
   return (
-    <div className={styles.viewport}>
+    <div className={styles.viewport} ref={screenRef}>
       <div className={styles.stage}>
         <img alt="Buscar salas" className={styles.background} src="/view-rooms-bg.png" />
         <div className={styles.createRoomOverlay}>
           <button className={styles.backButton} onClick={onBack} type="button">← Volver</button>
           <div className={styles.boardTopArea}>
             <div className={styles.setupContent} style={{ gap: "0.6rem" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <label className={styles.browseNameBar}>
+                <span className={styles.browseNameLabel}>Nombre:</span>
+                <input className={styles.browseNameInput} maxLength={30} onChange={(event) => onPlayerNameChange?.(event.target.value)} placeholder="Player1" type="text" value={playerName} />
+              </label>
+              <div className={styles.browseRoomsToolbar}>
                 <div className={styles.fieldLabel}>Salas abiertas</div>
-                <button className={styles.primaryButton} onClick={refresh} style={{ marginTop: 0 }} type="button">Actualizar</button>
+                <div className={styles.browseRoomsActions}>
+                  <button className={styles.primaryButton} onClick={onCreateRoom} style={{ marginTop: 0 }} type="button">Crear sala</button>
+                  <button className={styles.primaryButton} onClick={refresh} style={{ marginTop: 0 }} type="button">Actualizar</button>
+                </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: "0.5rem", fontWeight: 700 }}>
                 <span className={styles.fieldLabel}>Sala</span>
@@ -304,21 +935,16 @@ function BrowseRoomsScreen({ playerName, onBack, onJoinRoom, setStatusText }) {
                   const selected = room.id === selectedRoomId;
                   return (
                     <div
+                      className={styles.browseRoomRow}
                       key={room.id}
                       onClick={() => showRoom(room.id)}
+                      onFocus={() => showRoom(room.id)}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") showRoom(room.id); }}
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: "2fr 1fr 1fr auto",
-                        gap: "0.5rem",
-                        alignItems: "center",
-                        padding: "0.45rem 0.55rem",
                         border: selected ? "1px solid #8a6511" : "1px solid rgba(69,58,45,0.18)",
                         background: selected ? "rgba(216,177,58,0.12)" : "rgba(255,253,246,0.55)",
-                        textAlign: "left",
-                        cursor: "pointer",
                       }}
                     >
                       <span>{room.roomName}</span>
@@ -329,7 +955,7 @@ function BrowseRoomsScreen({ playerName, onBack, onJoinRoom, setStatusText }) {
                       </span>
                     </div>
                   );
-                }) : <div className={styles.readonlyValue}>En este momento no hay salas abiertas disponibles...</div>}
+                }) : <div className={styles.emptyRoomsMessage}>En este momento no hay salas abiertas disponibles...</div>}
               </div>
             </div>
           </div>
@@ -349,9 +975,9 @@ function BrowseRoomsScreen({ playerName, onBack, onJoinRoom, setStatusText }) {
                       {selectedRoom.slots.map((slot) => (
                         <div className={styles.slotRow} key={slot.id}>
                           <div className={styles.colorSwatchButton} style={{ background: getColorSwatch(slot.color), pointerEvents: "none" }} />
-                          <div className={styles.slotNameCell}><div className={styles.slotName}>{slot.label}</div><div className={styles.slotRole}>{slot.role}</div></div>
+                          <div className={styles.slotNameCell}><div className={styles.slotName}>{slot.label}</div><div className={styles.slotRole}>{slot.kind === "IA" ? `IA · ${slot.aiDifficulty || "Normal"}` : slot.role}</div></div>
                           <div className={styles.readonlyValue}>{slot.team}</div>
-                          <div className={styles.readonlyValue}>{slot.clientId ? "Jugador" : slot.kind}</div>
+                          <div className={styles.readonlyValue}>{slot.clientId ? "Jugador" : (slot.kind === "IA" ? `IA · ${slot.aiDifficulty || "Normal"}` : slot.kind)}</div>
                         </div>
                       ))}
                     </div>
@@ -367,8 +993,10 @@ function BrowseRoomsScreen({ playerName, onBack, onJoinRoom, setStatusText }) {
   );
 }
 
-function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame, statusText, setStatusText, backgroundSrc = CREATE_ROOM_BG, initialRoomId = null, initialIsHost = true }) {
-  const [roomName, setRoomName] = useState("");
+function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameChange, onBack, onStartGame, statusText, setStatusText, backgroundSrc = CREATE_ROOM_BG, initialRoomId = null, initialIsHost = true, createRequestId = null }) {
+  const screenRef = useRef(null);
+  const [statusIsError, setStatusIsError] = useState(false);
+  const [roomName, setRoomName] = useState(() => getDefaultRoomName(playerName));
   const [isCreated, setIsCreated] = useState(!!initialRoomId);
   const [mode, setMode] = useState("Normal");
   const [density, setDensity] = useState("Normal (1x)");
@@ -386,7 +1014,52 @@ function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame,
   const [localClientId, setLocalClientId] = useState(null);
   const countdownTimerRef = useRef(null);
   const lastSentConfigRef = useRef("");
-  const lobby = useLobbySocket(playerName, setStatusText);
+  const autoCreateRequestedRef = useRef(false);
+  const roomIdRef = useRef(roomId);
+  const localClientIdRef = useRef(localClientId);
+  const isLocalHostRef = useRef(isLocalHost);
+  const slotsRef = useRef(slots);
+  const fallbackLobby = useLobbySocket(playerName, setStatusText, !sharedLobby);
+  const lobby = sharedLobby || fallbackLobby;
+  const browserToken = getOrCreateOnlineBrowserToken();
+
+  useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
+  useEffect(() => { localClientIdRef.current = localClientId; }, [localClientId]);
+  useEffect(() => { isLocalHostRef.current = isLocalHost; }, [isLocalHost]);
+  useEffect(() => { slotsRef.current = slots; }, [slots]);
+
+  function beginCountdown(matchConfig = null) {
+    try {
+      const currentSettings = JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}");
+      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ ...currentSettings, gameMode: 2 }));
+    } catch {
+      // noop
+    }
+
+    const currentRoomId = roomIdRef.current;
+    const currentLocalClientId = localClientIdRef.current;
+    const currentSlots = slotsRef.current;
+    const currentIsLocalHost = isLocalHostRef.current;
+    const nextIsHost = currentLocalClientId
+      ? !!currentSlots.find((slot) => slot.clientId === currentLocalClientId && slot.isHost)
+      : currentIsLocalHost;
+    updateOnlineSession({ roomId: currentRoomId, isHost: nextIsHost, inMatch: true, matchConfig });
+    setStatusIsError(false);
+    setStatusText("Todos listos. Iniciando partida online en 3...");
+    setCountdown(3);
+    countdownTimerRef.current = window.setInterval(() => {
+      setCountdown((current) => {
+        if (current == null) return current;
+        if (current <= 1) {
+          window.clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+          window.setTimeout(() => onStartGame?.({ gameMode: "online_2v2" }), 0);
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1000);
+  }
 
   useEffect(() => {
     lobby.registerHandlers({
@@ -394,6 +1067,7 @@ function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame,
         setLocalClientId(payload?.clientId || null);
       },
       joined_room: (payload) => {
+        clearPendingCreateRoomRequest();
         setRoomId(payload?.roomId || null);
         setIsLocalHost(!!payload?.isHost);
         setIsCreated(true);
@@ -408,21 +1082,34 @@ function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame,
         setRounds(payload.rounds || "6");
         setLives(payload.lives || "3");
         setBaseHits(payload.baseHits || "3");
-        setSlots(payload.slots || []);
+        setSlots(normalizeSlotsWithAiIdentity(payload.slots || []));
         setMessages((payload.messages || []).length ? payload.messages : [{ id: "sys-empty", author: "Sistema", text: "Sala sincronizada." }]);
         setIsCreated(true);
-        const myHostSlot = (payload.slots || []).find((slot) => slot.isHost && slot.clientId && slot.clientId === localClientId);
-        const mySlot = (payload.slots || []).find((slot) => slot.clientId && slot.clientId === localClientId);
-        setIsLocalHost(!!myHostSlot);
-        setIsHostReady(!!mySlot?.isReady);
+        const currentLocalClientId = localClientIdRef.current;
+        const identifiedSlot = (payload.slots || []).find((slot) => slot.clientId && slot.clientId === currentLocalClientId) || null;
+        const fallbackHostSlot = (!identifiedSlot && (isLocalHostRef.current || initialIsHost))
+          ? ((payload.slots || []).find((slot) => slot.isHost) || null)
+          : null;
+        const mySlot = identifiedSlot || fallbackHostSlot;
+        setIsLocalHost(!!mySlot?.isHost);
+        if (mySlot) setIsHostReady(!!mySlot.isReady);
       },
       room_closed: () => {
+        clearPendingCreateRoomRequest();
         setStatusText("La sala se cerró porque no quedaron jugadores humanos conectados.");
         setIsCreated(false);
         setRoomId(null);
         setSlots(buildInitialSlots(playerName));
+        clearOnlineSession();
       },
-      error: (payload) => setStatusText(payload?.message || "No se pudo completar la acción."),
+      match_starting: (payload) => {
+        setStatusIsError(false);
+        beginCountdown(payload?.matchConfig || null);
+      },
+      error: (payload) => {
+        setStatusIsError(true);
+        setStatusText(payload?.message || "No se pudo completar la acción.");
+      },
     });
     lobby.connect();
   }, [playerName, localClientId]);
@@ -433,16 +1120,33 @@ function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame,
       lobby.send("list_rooms", { roomId: initialRoomId });
       return;
     }
-    lobby.send("join_room", { roomId: initialRoomId, playerName });
+    lobby.send("join_room", { roomId: initialRoomId, playerName, reconnectToken: getOrCreateOnlineReconnectToken() });
   }, [initialRoomId, initialIsHost, playerName]);
 
   useEffect(() => {
-    setSlots((current) => {
-      const next = [...current];
-      if (next[0] && !roomId) next[0] = { ...next[0], label: playerName || "Player1" };
-      return next;
+    if (!initialIsHost || initialRoomId || roomId || autoCreateRequestedRef.current || !createRequestId) return;
+
+    autoCreateRequestedRef.current = true;
+    const nextSlots = buildInitialSlots(playerName).map((slot, index) => {
+      if (index === 0) return { ...slot, label: playerName || "Player1" };
+      return slot;
     });
-  }, [playerName, roomId]);
+    const nextRoomName = roomName.trim() || getDefaultRoomName(playerName);
+
+    setStatusText(`Abriendo "${nextRoomName}"...`);
+    lobby.send("create_room", {
+      createRequestId,
+      roomName: nextRoomName,
+      playerName,
+      browserToken,
+      mode,
+      density,
+      rounds,
+      lives,
+      baseHits,
+      slots: nextSlots,
+    });
+  }, [initialIsHost, initialRoomId, roomId, playerName, roomName, browserToken, mode, density, rounds, lives, baseHits, createRequestId]);
 
   useEffect(() => () => {
     if (countdownTimerRef.current) {
@@ -459,18 +1163,27 @@ function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame,
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, []);
 
-  useEffect(() => {
-    function handleBeforeUnload() {
-      if (roomId) {
-        lobby.send("leave_room", { roomId });
-      }
-    }
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [roomId]);
+  const occupiedSlots = useMemo(() => getOccupiedCount(slots), [slots]);
+  const localSlot = useMemo(
+    () => (localClientId ? slots.find((slot) => slot.clientId === localClientId) || null : null),
+    [slots, localClientId],
+  );
+  const effectiveIsLocalHost = localSlot ? !!localSlot.isHost : isLocalHost;
+  const effectiveIsHostReady = localSlot ? !!localSlot.isReady : isHostReady;
+  const isVisibleErrorStatus = statusIsError || /no se pudo conectar|error|no se pudo/i.test(String(statusText || ""));
+  const allHumansReady = useMemo(() => {
+    const humans = slots.filter((slot) => slot.clientId);
+    return humans.length > 0 && humans.every((slot) => slot.isReady);
+  }, [slots]);
+  const canStartMatch = isCreated && occupiedSlots === 4 && allHumansReady && countdown == null;
 
   useEffect(() => {
-    if (!isCreated || !roomId || !isLocalHost) return;
+    if (!roomId) return;
+    updateOnlineSession({ roomId, isHost: effectiveIsLocalHost, inMatch: false });
+  }, [roomId, effectiveIsLocalHost]);
+
+  useEffect(() => {
+    if (!isCreated || !roomId || !effectiveIsLocalHost) return;
     const payload = {
       roomId,
       roomName,
@@ -486,85 +1199,59 @@ function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame,
     if (serialized === lastSentConfigRef.current) return;
     lastSentConfigRef.current = serialized;
     lobby.send("update_room", payload);
-  }, [isCreated, roomId, isLocalHost, roomName, playerName, mode, density, rounds, lives, baseHits, slots]);
+  }, [isCreated, roomId, effectiveIsLocalHost, roomName, playerName, mode, density, rounds, lives, baseHits, slots]);
 
   useEffect(() => {
     if (!roomId) return;
     lobby.send("set_ready", { roomId, isReady: isHostReady });
   }, [roomId, isHostReady]);
 
-  const occupiedSlots = useMemo(() => getOccupiedCount(slots), [slots]);
-  const allHumansReady = useMemo(() => {
-    const humans = slots.filter((slot) => slot.clientId);
-    return humans.length > 0 && humans.every((slot) => slot.isReady);
-  }, [slots]);
-  const canStartMatch = isCreated && occupiedSlots === 4 && allHumansReady && countdown == null;
-
   function launchOnlineMatch() {
-    if (!canStartMatch) {
-      if (occupiedSlots < 4) setStatusText("Necesitás 4 slots ocupados para comenzar la partida.");
-      else if (!allHumansReady) setStatusText("Todos los humanos conectados tienen que marcar ESTOY LISTO.");
+    if (!roomId) {
+      setStatusText("La sala todavía no terminó de crearse en el servidor.");
       return;
     }
-
-    try {
-      const currentSettings = JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}");
-      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ ...currentSettings, gameMode: 2 }));
-    } catch {
-      // noop
-    }
-
-    setStatusText("Todos listos. Iniciando partida online en 10...");
-    setCountdown(10);
-    countdownTimerRef.current = window.setInterval(() => {
-      setCountdown((current) => {
-        if (current == null) return current;
-        if (current <= 1) {
-          window.clearInterval(countdownTimerRef.current);
-          countdownTimerRef.current = null;
-          window.setTimeout(() => onStartGame?.(), 0);
-          return 0;
-        }
-        return current - 1;
-      });
-    }, 1000);
-  }
-
-  function handleCreate() {
-    const trimmedRoomName = roomName.trim();
-    if (!trimmedRoomName) {
-      setStatusText("Poné un nombre de sala para continuar.");
-      return;
-    }
-
-    const nextSlots = buildInitialSlots(playerName).map((slot, index) => {
-      if (index === 0) return { ...slot, label: playerName || "Player1" };
-      return slot;
-    });
-
-    setSlots(nextSlots);
-    setRoomName(trimmedRoomName);
-    setIsCreated(true);
-    setStatusText(`Sala "${trimmedRoomName}" creada y visible.`);
-    setMessages((current) => [...current, { id: `sys-${current.length + 1}`, author: "Sistema", text: `La sala ${trimmedRoomName} quedó visible para nuevos jugadores.` }]);
-    lobby.send("create_room", {
-      roomName: trimmedRoomName,
-      playerName,
-      mode,
-      density,
-      rounds,
-      lives,
-      baseHits,
-      slots: nextSlots,
-    });
+    if (!effectiveIsLocalHost || countdown != null) return;
+    lobby.send("start_match", { roomId });
   }
 
   function updateSlot(slotId, field, value) {
-    if (!isLocalHost) return;
-    setSlots((current) => current.map((slot) => {
+    if (!effectiveIsLocalHost) return;
+    setSlots((current) => normalizeSlotsWithAiIdentity(current.map((slot) => {
       if (slot.id !== slotId || slot.clientId || slot.isHost) return slot;
-      return { ...slot, [field]: value };
+      if (field === "kind") {
+        if (value === "IA") {
+          return {
+            ...slot,
+            kind: value,
+            label: pickRandomAiCelebrityName(current, slotId),
+            aiDifficulty: normalizeAiDifficulty(slot.aiDifficulty),
+          };
+        }
+        return {
+          ...slot,
+          kind: value,
+          label: slot.baseRole || slot.role || slot.label,
+        };
+      }
+      return {
+        ...slot,
+        [field]: field === "aiDifficulty"
+          ? normalizeAiDifficulty(value)
+          : (field === "color" ? normalizeCustomColor(value) : value),
+      };
+    })));
+  }
+
+  function updateMyOwnSlot(slotId, field, value) {
+    setSlots((current) => current.map((slot) => {
+      if (slot.id !== slotId) return slot;
+      return {
+        ...slot,
+        [field]: field === "color" ? normalizeCustomColor(value) : value,
+      };
     }));
+    lobby.send("update_my_slot", { roomId, [field]: field === "color" ? normalizeCustomColor(value) : value });
   }
 
   function sendMessage(event) {
@@ -576,81 +1263,103 @@ function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame,
     setStatusText("Mensaje enviado al lobby.");
   }
 
+  useGamepadMenuNavigation({
+    enabled: true,
+    rootRef: screenRef,
+    onBack: () => {
+      clearPendingCreateRoomRequest();
+      if (roomIdRef.current) lobby.send("leave_room", { roomId: roomIdRef.current });
+      clearOnlineSession();
+      onBack?.();
+    },
+  });
+
   return (
-    <div className={styles.viewport}>
+    <div className={styles.viewport} ref={screenRef}>
       <div className={styles.stage}>
         <img alt="Crear sala" className={styles.background} src={backgroundSrc} />
 
         <div className={styles.createRoomOverlay}>
           <button className={styles.backButton} onClick={() => {
+            clearPendingCreateRoomRequest();
             if (roomId) lobby.send("leave_room", { roomId });
+            clearOnlineSession();
             onBack();
           }} type="button">
             ← Volver
           </button>
 
           <div className={styles.boardTopArea}>
-            {!isCreated ? (
-              <div className={styles.formCard}>
-                <label className={styles.fieldBlock}>
-                  <span className={styles.fieldLabel}>Nombre usuario</span>
-                  <input className={styles.textField} onChange={(event) => onPlayerNameChange(event.target.value)} placeholder="Player1" type="text" value={playerName} />
-                </label>
-                <label className={styles.fieldBlock}>
-                  <span className={styles.fieldLabel}>Nombre sala</span>
-                  <input className={styles.textField} onChange={(event) => setRoomName(event.target.value)} placeholder="Poné un nombre de sala" type="text" value={roomName} />
-                </label>
-                <button className={styles.primaryButton} onClick={handleCreate} type="button">Crear</button>
-              </div>
-            ) : (
               <div className={styles.setupContent}>
                 <div className={styles.topSettingsGrid}>
                   <ReadonlySetting label="Nombre usuario" value={playerName} />
-                  <InlineSetting label="Modo"><select className={styles.selectField} disabled={!isLocalHost} onChange={(event) => setMode(event.target.value)} value={mode}>{MODE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
-                  <ReadonlySetting label="Nombre sala" value={roomName} />
-                  <InlineSetting label="Densidad"><select className={styles.selectField} disabled={!isLocalHost} onChange={(event) => setDensity(event.target.value)} value={density}>{DENSITY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  <InlineSetting label="Modo"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setMode(event.target.value)} value={mode}>{MODE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  <div className={styles.matchActionsInline}>
+                    <label className={styles.readyToggle}>
+                      <input checked={effectiveIsHostReady} className={styles.readyCheckbox} onChange={(event) => setIsHostReady(event.target.checked)} type="checkbox" />
+                      <span className={styles.readyLabel}>ESTOY LISTO</span>
+                    </label>
+                    {effectiveIsLocalHost && (
+                      <button className={`${styles.startMatchButton} ${canStartMatch ? styles.startMatchButtonReady : ""}`} onClick={launchOnlineMatch} type="button">COMENZAR PARTIDA</button>
+                    )}
+                    {countdown != null ? <div className={styles.countdownText}>Inicia en {countdown}...</div> : null}
+                  </div>
+                  <InlineSetting label="Nombre sala"><input className={styles.textField} disabled={!effectiveIsLocalHost} maxLength={30} onChange={(event) => setRoomName(event.target.value)} placeholder="Sala de Player1" type="text" value={roomName} /></InlineSetting>
+                  <InlineSetting label="Densidad"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setDensity(event.target.value)} value={density}>{DENSITY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
                 </div>
 
                 <div className={styles.compactSettingsRow}>
-                  <InlineSetting label="Rondas"><select className={styles.selectField} disabled={!isLocalHost} onChange={(event) => setRounds(event.target.value)} value={rounds}>{ROUND_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
-                  <InlineSetting label="Vidas p/ronda"><select className={styles.selectField} disabled={!isLocalHost} onChange={(event) => setLives(event.target.value)} value={lives}>{LIVES_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
-                  <InlineSetting label="Balas vs base p/ronda"><select className={styles.selectField} disabled={!isLocalHost} onChange={(event) => setBaseHits(event.target.value)} value={baseHits}>{BASE_HITS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  <InlineSetting label="Rondas"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setRounds(event.target.value)} value={rounds}>{ROUND_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  <InlineSetting label="Vidas p/ronda"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setLives(event.target.value)} value={lives}>{LIVES_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  <InlineSetting label="Balas vs base p/ronda"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setBaseHits(event.target.value)} value={baseHits}>{BASE_HITS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
                 </div>
 
                 <div className={styles.slotsSection}>
                   <div className={styles.slotHeaderRow}><span /><span>Jugador</span><span>Equipo</span><span>Tipo</span></div>
                   <div className={styles.slotsTable}>
-                    {slots.map((slot) => (
-                      <div className={styles.slotRow} key={slot.id}>
-                        <ColorPicker disabled={!isLocalHost || !!slot.clientId || slot.isHost} onChange={(nextColor) => updateSlot(slot.id, "color", nextColor)} onClose={() => setOpenColorSlotId(null)} onToggle={() => setOpenColorSlotId((current) => current === slot.id ? null : slot.id)} open={openColorSlotId === slot.id} value={slot.color} />
-                        <div className={styles.slotNameCell}>
-                          <div className={styles.slotName}>{slot.label}</div>
-                          <div className={styles.slotRole}>{slot.isHost ? "Anfitrión" : slot.role}</div>
+                    {slots.map((slot) => {
+                      const isMySlot = !!slot.clientId && slot.clientId === localClientId;
+                      const isMyHostSlot = effectiveIsLocalHost && slot.isHost;
+                      const isEmptyHostEditable = !slot.clientId && !slot.isHost && effectiveIsLocalHost;
+                      const canEditColor = isMySlot || isMyHostSlot || isEmptyHostEditable;
+                      const canEditTeam = isMySlot || isMyHostSlot || isEmptyHostEditable;
+                      const teamOptions = getTeamOptionsForSlot(slots, slot);
+                      const selectedTeamValue = getEffectiveSlotTeamValue(slots, slot);
+                      return (
+                        <div className={styles.slotRow} key={slot.id}>
+                          <ColorPicker
+                            disabled={!canEditColor}
+                            onChange={(nextColor) => (isMySlot || isMyHostSlot) ? updateMyOwnSlot(slot.id, "color", nextColor) : updateSlot(slot.id, "color", nextColor)}
+                            onClose={() => setOpenColorSlotId(null)}
+                            onToggle={() => setOpenColorSlotId((current) => current === slot.id ? null : slot.id)}
+                            open={openColorSlotId === slot.id}
+                            value={slot.color}
+                          />
+                          <div className={styles.slotNameCell}>
+                            <div className={styles.slotName}>{slot.label}</div>
+                            <div className={styles.slotRole}>{slot.isHost ? "Anfitrión" : (slot.kind === "IA" ? `IA · ${slot.aiDifficulty || "Normal"}` : slot.role)}</div>
+                          </div>
+                          {canEditTeam ? (
+                            <select className={styles.slotSelect} onChange={(event) => (isMySlot || isMyHostSlot) ? updateMyOwnSlot(slot.id, "team", event.target.value) : updateSlot(slot.id, "team", event.target.value)} value={selectedTeamValue}>{teamOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select>
+                          ) : (
+                            <div className={styles.readonlyValue}>{slot.team}</div>
+                          )}
+                          {slot.isHost ? <div className={styles.hostBadge}>Anfitrión</div> : slot.clientId ? <div className={styles.readonlyValue}>Jugador</div> : (
+                            <div className={styles.slotTypeControls}>
+                              <select className={styles.slotSelect} disabled={!effectiveIsLocalHost} onChange={(event) => updateSlot(slot.id, "kind", event.target.value)} value={slot.kind}>{SLOT_KIND_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>
+                              {slot.kind === "IA" ? (
+                                <select className={`${styles.slotSelect} ${styles.slotDifficultySelect}`} disabled={!effectiveIsLocalHost} onChange={(event) => updateSlot(slot.id, "aiDifficulty", event.target.value)} value={slot.aiDifficulty || "Normal"}>{AI_DIFFICULTY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>
+                              ) : null}
+                            </div>
+                          )}
                         </div>
-                        {slot.clientId || slot.isHost ? <div className={styles.readonlyValue}>{slot.team}</div> : (
-                          <select className={styles.slotSelect} disabled={!isLocalHost} onChange={(event) => updateSlot(slot.id, "team", event.target.value)} value={slot.team}>{SLOT_TEAM_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>
-                        )}
-                        {slot.isHost ? <div className={styles.hostBadge}>Anfitrión</div> : slot.clientId ? <div className={styles.readonlyValue}>Jugador</div> : (
-                          <select className={styles.slotSelect} disabled={!isLocalHost} onChange={(event) => updateSlot(slot.id, "kind", event.target.value)} value={slot.kind}>{SLOT_KIND_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
-            )}
           </div>
 
-          {isCreated ? (
-            <div className={styles.matchStartPanel}>
-              <label className={styles.readyToggle}>
-                <input checked={isHostReady} className={styles.readyCheckbox} onChange={(event) => setIsHostReady(event.target.checked)} type="checkbox" />
-                <span className={styles.readyLabel}>ESTOY LISTO</span>
-              </label>
-              <button className={`${styles.startMatchButton} ${canStartMatch ? styles.startMatchButtonReady : ""}`} disabled={!isLocalHost} onClick={launchOnlineMatch} type="button">COMENZAR PARTIDA</button>
-              {countdown != null ? <div className={styles.countdownText}>Inicia en {countdown}</div> : null}
-            </div>
-          ) : null}
 
           <div className={styles.boardBottomArea}>
             <div className={styles.chatMessages}>
@@ -663,7 +1372,7 @@ function CreateRoomScreen({ playerName, onPlayerNameChange, onBack, onStartGame,
             <button className={styles.sendButton} type="submit">Enviar</button>
           </form>
 
-          <div className={styles.roomFooterText}>{statusText}</div>
+          <div className={`${styles.roomFooterText}${isVisibleErrorStatus ? ` ${styles.roomFooterTextError}` : ""}`}>{statusText}</div>
         </div>
       </div>
     </div>
@@ -677,35 +1386,78 @@ export default function TankGameLanding({ onStartGame }) {
   const [statusText, setStatusText] = useState(MENU_SCREENS.root.status);
   const [playerName, setPlayerName] = useState("Player1");
   const [joinedRoomSession, setJoinedRoomSession] = useState(null);
+  const [pendingSurvivalSettings, setPendingSurvivalSettings] = useState(null);
   const lastNavAtRef = useRef(0);
   const lastAxisDirRef = useRef(0);
+  const lastConfirmPressedRef = useRef(false);
+  const lastBackPressedRef = useRef(false);
 
   const menu = useMemo(() => MENU_SCREENS[menuKey] ?? MENU_SCREENS.root, [menuKey]);
+  const lobby = useLobbySocket(playerName, setStatusText);
 
   useEffect(() => {
-    try {
-      const savedName = window.localStorage.getItem(PLAYER_NAME_STORAGE_KEY);
-      if (savedName?.trim()) setPlayerName(savedName.trim());
-    } catch {
-      // noop
+    const isLobbyScreen = screen === "browseRooms" || screen === "createRoom" || screen === "joinedRoom";
+    if (!isLobbyScreen) {
+      lobby.registerHandlers({});
+      lobby.disconnect();
     }
+  }, [lobby, screen]);
+
+  useEffect(() => {
+    const initialPlayerName = readStoredOnlinePlayerName() || "Player1";
+    setPlayerName(initialPlayerName);
+
+    const initialLobbySession = getStoredLobbySession();
+    if (!initialLobbySession) return;
+
+    setJoinedRoomSession(initialLobbySession);
+    setScreen(initialLobbySession.isHost ? "createRoom" : "joinedRoom");
+    setStatusText(initialLobbySession.isHost ? "Reconectando con tu sala..." : "Reconectando con la sala...");
   }, []);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(PLAYER_NAME_STORAGE_KEY, playerName || "Player1");
-    } catch {
-      // noop
+    const nextPlayerName = normalizedPlayerName(playerName);
+    writeStoredOnlinePlayerName(nextPlayerName);
+    if (screen === "browseRooms" || screen === "createRoom" || screen === "joinedRoom") {
+      claimOnlinePlayerName(nextPlayerName);
+      return;
     }
-  }, [playerName]);
+    releaseOnlinePlayerName();
+  }, [playerName, screen]);
 
   useEffect(() => {
-    setSelectedIndex(0);
-    setStatusText(menu.status);
-  }, [menuKey, menu.status]);
+    const release = () => releaseOnlinePlayerName();
+    window.addEventListener("pagehide", release);
+    return () => {
+      window.removeEventListener("pagehide", release);
+      release();
+    };
+  }, []);
 
   function normalizedPlayerName(value) {
     return value.trimStart() || "Player1";
+  }
+
+  function ensureMultiplayerPlayerName() {
+    const storedName = readStoredOnlinePlayerName();
+    if (storedName?.trim()) {
+      const nextName = normalizedPlayerName(storedName);
+      setPlayerName(nextName);
+      return nextName;
+    }
+
+    const suggestedName = getSuggestedOnlinePlayerName();
+    setPlayerName(suggestedName);
+    return suggestedName;
+  }
+
+  function openMenu(nextMenuKey, nextStatusText = MENU_SCREENS[nextMenuKey]?.status || MENU_SCREENS.root.status) {
+    setMenuKey(nextMenuKey);
+    setSelectedIndex(0);
+    setStatusText(nextStatusText);
+    lastNavAtRef.current = performance.now();
+    lastConfirmPressedRef.current = true;
+    lastBackPressedRef.current = true;
   }
 
   function moveSelection(direction) {
@@ -716,24 +1468,46 @@ export default function TankGameLanding({ onStartGame }) {
     const item = menu.items[selectedIndex];
     if (!item) return;
     if (item.next) {
-      setMenuKey(item.next);
+      if (item.next === "survivalDifficulty") {
+        setPendingSurvivalSettings(null);
+      }
+      if (item.next === "survivalMode") {
+        setPendingSurvivalSettings(item.localSettings || null);
+      }
+      openMenu(item.next);
       return;
     }
     if (item.back) {
-      setMenuKey("root");
-      setStatusText("Volviste al menú anterior.");
+      const previousMenuKey = item.backTo || "root";
+      if (previousMenuKey === "single" || previousMenuKey === "root") {
+        setPendingSurvivalSettings(null);
+      }
+      const previousStatusText = previousMenuKey === "root"
+        ? "Volviste al menú anterior."
+        : MENU_SCREENS[previousMenuKey]?.status || "Volviste al menú anterior.";
+      openMenu(previousMenuKey, previousStatusText);
+      setStatusText(previousStatusText);
       return;
     }
     if (item.action === "play") {
-      onStartGame?.();
+      onStartGame?.({
+        gameMode: item.gameMode || "classic",
+        localSettings: item.gameMode === "survival"
+          ? { ...(pendingSurvivalSettings || {}), ...(item.localSettings || {}) }
+          : (item.localSettings || null),
+      });
       return;
     }
     if (item.action === "createRoom") {
+      ensureMultiplayerPlayerName();
+      armPendingCreateRoomRequest();
+      setJoinedRoomSession(null);
       setScreen("createRoom");
-      setStatusText("Definí los datos iniciales de la sala.");
+      setStatusText("Abriendo tu nueva sala...");
       return;
     }
     if (item.action === "browseRooms") {
+      ensureMultiplayerPlayerName();
       setScreen("browseRooms");
       setStatusText("Buscando salas disponibles.");
       return;
@@ -745,9 +1519,9 @@ export default function TankGameLanding({ onStartGame }) {
     function onKeyDown(event) {
       if ((screen === "createRoom" || screen === "browseRooms") && ["Escape", "Backspace"].includes(event.key) && !isTypingTarget(event.target)) {
         event.preventDefault();
+        clearOnlineSession();
         setScreen("menu");
-        setMenuKey("multi");
-        setStatusText("Volviste a Multiplayer.");
+        openMenu("root", "Volviste al menú principal.");
         return;
       }
       if (screen !== "menu") return;
@@ -779,9 +1553,9 @@ export default function TankGameLanding({ onStartGame }) {
         const now = performance.now();
         if (screen !== "menu") {
           if ((pad.buttons?.[1]?.pressed || pad.buttons?.[9]?.pressed) && now - lastNavAtRef.current > 120) {
+            clearOnlineSession();
             setScreen("menu");
-            setMenuKey("multi");
-            setStatusText("Volviste a Multiplayer.");
+            openMenu("root", "Volviste al menú principal.");
             lastNavAtRef.current = now;
           }
           frameId = window.requestAnimationFrame(loop);
@@ -790,6 +1564,8 @@ export default function TankGameLanding({ onStartGame }) {
         const axisY = pad.axes?.[1] ?? 0;
         const downPressed = Boolean(pad.buttons?.[13]?.pressed);
         const upPressed = Boolean(pad.buttons?.[12]?.pressed);
+        const confirmPressed = Boolean(pad.buttons?.[0]?.pressed);
+        const backPressed = Boolean(pad.buttons?.[1]?.pressed || pad.buttons?.[9]?.pressed);
         let direction = 0;
         if (axisY > AXIS_DEADZONE || downPressed) direction = 1;
         if (axisY < -AXIS_DEADZONE || upPressed) direction = -1;
@@ -798,15 +1574,21 @@ export default function TankGameLanding({ onStartGame }) {
           lastNavAtRef.current = now;
         }
         lastAxisDirRef.current = direction;
-        if (pad.buttons?.[0]?.pressed && now - lastNavAtRef.current > 120) {
+        if (confirmPressed && !lastConfirmPressedRef.current && now - lastNavAtRef.current > 120) {
           activateCurrent();
           lastNavAtRef.current = now;
         }
-        if (menuKey !== "root" && (pad.buttons?.[1]?.pressed || pad.buttons?.[9]?.pressed) && now - lastNavAtRef.current > 120) {
+        if (menuKey !== "root" && backPressed && !lastBackPressedRef.current && now - lastNavAtRef.current > 120) {
           setMenuKey("root");
           setStatusText("Volviste al menú anterior.");
           lastNavAtRef.current = now;
         }
+        lastConfirmPressedRef.current = confirmPressed;
+        lastBackPressedRef.current = backPressed;
+      } else {
+        lastAxisDirRef.current = 0;
+        lastConfirmPressedRef.current = false;
+        lastBackPressedRef.current = false;
       }
       frameId = window.requestAnimationFrame(loop);
     }
@@ -815,15 +1597,20 @@ export default function TankGameLanding({ onStartGame }) {
   }, [screen, menuKey, selectedIndex, menu.items]);
 
   if (screen === "createRoom") {
-    return <CreateRoomScreen onBack={() => { setScreen("menu"); setMenuKey("multi"); setStatusText("Volviste a Multiplayer."); }} onPlayerNameChange={(value) => setPlayerName(normalizedPlayerName(value))} playerName={playerName} setStatusText={setStatusText} statusText={statusText} onStartGame={onStartGame} />;
+    return <CreateRoomScreen lobby={lobby} createRequestId={readPendingCreateRoomRequest()} initialIsHost={joinedRoomSession?.isHost ?? true} initialRoomId={joinedRoomSession?.isHost ? joinedRoomSession?.roomId || null : null} onBack={() => { clearPendingCreateRoomRequest(); setJoinedRoomSession(null); setScreen("browseRooms"); setStatusText("Volviste al listado de salas."); }} onPlayerNameChange={(value) => setPlayerName(normalizedPlayerName(value))} playerName={playerName} setStatusText={setStatusText} statusText={statusText} onStartGame={onStartGame} />;
   }
 
   if (screen === "joinedRoom") {
-    return <CreateRoomScreen backgroundSrc={JOINED_ROOM_BG} initialIsHost={!!joinedRoomSession?.isHost} initialRoomId={joinedRoomSession?.roomId || null} onBack={() => { setJoinedRoomSession(null); setScreen("browseRooms"); setStatusText("Volviste al listado de salas."); }} onPlayerNameChange={(value) => setPlayerName(normalizedPlayerName(value))} playerName={playerName} setStatusText={setStatusText} statusText={statusText} onStartGame={onStartGame} />;
+    return <CreateRoomScreen lobby={lobby} backgroundSrc={JOINED_ROOM_BG} initialIsHost={!!joinedRoomSession?.isHost} initialRoomId={joinedRoomSession?.roomId || null} onBack={() => { setJoinedRoomSession(null); setScreen("browseRooms"); setStatusText("Volviste al listado de salas."); }} onPlayerNameChange={(value) => setPlayerName(normalizedPlayerName(value))} playerName={playerName} setStatusText={setStatusText} statusText={statusText} onStartGame={onStartGame} />;
   }
 
   if (screen === "browseRooms") {
-    return <BrowseRoomsScreen onBack={() => { setScreen("menu"); setMenuKey("multi"); setStatusText("Volviste a Multiplayer."); }} onJoinRoom={(session) => { setJoinedRoomSession(session); setScreen("joinedRoom"); setStatusText("Uniéndote a la sala..."); }} playerName={playerName} setStatusText={setStatusText} />;
+    return <BrowseRoomsScreen onBack={() => { setScreen("menu"); setMenuKey("root"); setStatusText("Volviste al menú principal."); }} onCreateRoom={() => {
+      armPendingCreateRoomRequest();
+      setJoinedRoomSession(null);
+      setScreen("createRoom");
+      setStatusText("Abriendo tu nueva sala...");
+    }} onJoinRoom={(session) => { setJoinedRoomSession(session); setScreen("joinedRoom"); setStatusText("Uniéndote a la sala..."); }} onPlayerNameChange={(value) => setPlayerName(normalizedPlayerName(value))} playerName={playerName} setStatusText={setStatusText} />;
   }
 
   return (

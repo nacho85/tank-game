@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -d /c/devs/tank-game/*/)",
+      "Bash(node --input-type=module)",
+      "Bash(xargs grep:*)",
+      "Bash(ls -la /c/devs/tank-game/public/tank-game/*.png)",
+      "Bash(node --input-type=module --eval \"import './src/server.js'\")"
+    ]
+  }
+}

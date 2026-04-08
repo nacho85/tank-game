@@ -266,6 +266,24 @@ export function applyBaseFortressToFineLevel(level, tileType = TILE.BRICK) {
   });
 }
 
+export function isBaseFortressCell(level, col, row) {
+  const baseCol = getLevelBaseAnchorCol(level);
+  const baseRow = getLevelBaseAnchorRow(level);
+  const fortressStartCol = baseCol - TILE_SUBDIVISION;
+  const fortressEndCol = baseCol + (TILE_SUBDIVISION * 3) - 1;
+  const fortressStartRow = baseRow - TILE_SUBDIVISION;
+  const fortressEndRow = baseRow + (TILE_SUBDIVISION * 2) - 1;
+  const isBaseTile = col >= baseCol && col < baseCol + TILE_SUBDIVISION && row >= baseRow && row < baseRow + TILE_SUBDIVISION;
+
+  return (
+    !isBaseTile &&
+    col >= fortressStartCol &&
+    col <= fortressEndCol &&
+    row >= fortressStartRow &&
+    row <= fortressEndRow
+  );
+}
+
 export function clearFineRect(level, startCol, startRow, width, height) {
   for (let row = startRow; row < startRow + height; row += 1) {
     for (let col = startCol; col < startCol + width; col += 1) {
@@ -315,7 +333,7 @@ export function carveDestructibleCorridor(level, startCol, startRow, targetCol, 
       for (let dx = 0; dx < 2; dx += 1) {
         const fineCol = col + dx;
         const fineRow = row + dy;
-        if (!inBounds(fineCol, fineRow)) continue;
+        if (!inBounds(fineCol, fineRow, level)) continue;
         level.floor[fineRow][fineCol] = TILE.ROAD;
         level.overlay[fineRow][fineCol] = null;
         if (level.obstacles[fineRow][fineCol] === TILE.BASE) continue;
@@ -365,7 +383,7 @@ export function reserveSafetyAreaAroundWorldPoint(level, worldX, worldY, originX
   const row = worldToGridRow(worldY, originY);
   for (let y = row - radiusTiles; y <= row + radiusTiles; y += 1) {
     for (let x = col - radiusTiles; x <= col + radiusTiles; x += 1) {
-      if (!inBounds(x, y)) continue;
+      if (!inBounds(x, y, level)) continue;
       if (level.obstacles[y][x] !== TILE.BASE) {
         level.obstacles[y][x] = null;
       }
@@ -400,7 +418,7 @@ export function getSurvivalDensitySettings(settings) {
 }
 
 export function canWriteObstacleAt(level, col, row) {
-  return inBounds(col, row) && level.obstacles[row][col] !== TILE.BASE;
+  return inBounds(col, row, level) && level.obstacles[row][col] !== TILE.BASE;
 }
 
 export function setObstacleTile(level, col, row, tileType) {
@@ -486,15 +504,17 @@ export function paintBuildingFootprint(level, startCol, startRow, width, height,
 
 export function placeBuildingStructures(level, settings, localRandom) {
   const { brickChance, steelChance, buildingClustering, buildingComplexity, variability } = getSurvivalDensitySettings(settings);
-  const targetBuildingTiles = Math.round((GRID_WIDTH * GRID_HEIGHT) * (brickChance + steelChance));
+  const levelWidth = getLevelWidth(level);
+  const levelHeight = getLevelHeight(level);
+  const targetBuildingTiles = Math.round((levelWidth * levelHeight) * (brickChance + steelChance));
   if (targetBuildingTiles <= 0) return;
 
   let painted = 0;
   let attempts = 0;
   while (painted < targetBuildingTiles && attempts < 160) {
     attempts += 1;
-    const startCol = 1 + Math.floor(localRandom() * Math.max(1, GRID_WIDTH - 6));
-    const startRow = 1 + Math.floor(localRandom() * Math.max(1, GRID_HEIGHT - 6));
+    const startCol = 1 + Math.floor(localRandom() * Math.max(1, levelWidth - 6));
+    const startRow = 1 + Math.floor(localRandom() * Math.max(1, levelHeight - 6));
     const width = 2 + Math.floor(localRandom() * (2 + buildingClustering * 4));
     const height = 2 + Math.floor(localRandom() * (2 + buildingClustering * 4));
     const useSteel = localRandom() < (steelChance / Math.max(0.001, brickChance + steelChance));
@@ -521,8 +541,8 @@ export function placeBuildingStructures(level, settings, localRandom) {
     if (localRandom() < (0.16 + buildingComplexity * 0.3)) {
       const annexWidth = Math.max(2, Math.floor(width * (0.4 + localRandom() * 0.25)));
       const annexHeight = Math.max(2, Math.floor(height * (0.4 + localRandom() * 0.25)));
-      const annexCol = clamp(startCol + (localRandom() < 0.5 ? -annexWidth + 1 : width - 1), 0, GRID_WIDTH - annexWidth);
-      const annexRow = clamp(startRow + Math.floor(localRandom() * Math.max(1, height - 1)), 0, GRID_HEIGHT - annexHeight);
+      const annexCol = clamp(startCol + (localRandom() < 0.5 ? -annexWidth + 1 : width - 1), 0, levelWidth - annexWidth);
+      const annexRow = clamp(startRow + Math.floor(localRandom() * Math.max(1, height - 1)), 0, levelHeight - annexHeight);
       painted += paintBuildingFootprint(level, annexCol, annexRow, annexWidth, annexHeight, tileType, localRandom, cutOutChance * 0.5);
     }
   }
@@ -552,22 +572,24 @@ export function paintBushPatch(level, centerCol, centerRow, radiusX, radiusY, lo
 
 export function scatterBushOverlay(level, settings, localRandom) {
   const { bushChance, variability, bushClustering, bushPatchScale } = getSurvivalDensitySettings(settings);
+  const lw = getLevelWidth(level);
+  const lh = getLevelHeight(level);
 
-  for (let row = 0; row < getLevelHeight(level); row += 1) {
-    for (let col = 0; col < getLevelWidth(level); col += 1) {
+  for (let row = 0; row < lh; row += 1) {
+    for (let col = 0; col < lw; col += 1) {
       level.overlay[row][col] = null;
     }
   }
 
-  const targetBushTiles = Math.round((GRID_WIDTH * GRID_HEIGHT) * bushChance);
+  const targetBushTiles = Math.round((lw * lh) * bushChance);
   if (targetBushTiles <= 0) return;
 
   let painted = 0;
   let attempts = 0;
   while (painted < targetBushTiles && attempts < 220) {
     attempts += 1;
-    const centerCol = 1 + Math.floor(localRandom() * Math.max(1, GRID_WIDTH - 2));
-    const centerRow = 1 + Math.floor(localRandom() * Math.max(1, GRID_HEIGHT - 2));
+    const centerCol = 1 + Math.floor(localRandom() * Math.max(1, lw - 2));
+    const centerRow = 1 + Math.floor(localRandom() * Math.max(1, lh - 2));
     const radiusBase = 1 + Math.floor(localRandom() * (1 + bushPatchScale * 3.2));
     const radiusX = Math.max(1, radiusBase + Math.floor((localRandom() - 0.5) * (1 + bushClustering * 2)));
     const radiusY = Math.max(1, radiusBase + Math.floor((localRandom() - 0.5) * (1 + bushClustering * 2)));
@@ -575,8 +597,8 @@ export function scatterBushOverlay(level, settings, localRandom) {
     painted += paintBushPatch(level, centerCol, centerRow, radiusX, radiusY, localRandom, densityMultiplier);
 
     if (localRandom() < (0.22 + bushClustering * 0.46)) {
-      const offsetCol = clamp(centerCol + Math.round((localRandom() - 0.5) * (2 + bushPatchScale * 3)), 1, GRID_WIDTH - 2);
-      const offsetRow = clamp(centerRow + Math.round((localRandom() - 0.5) * (2 + bushPatchScale * 3)), 1, GRID_HEIGHT - 2);
+      const offsetCol = clamp(centerCol + Math.round((localRandom() - 0.5) * (2 + bushPatchScale * 3)), 1, lw - 2);
+      const offsetRow = clamp(centerRow + Math.round((localRandom() - 0.5) * (2 + bushPatchScale * 3)), 1, lh - 2);
       painted += paintBushPatch(
         level,
         offsetCol,
@@ -599,6 +621,7 @@ export function placeBalancedProceduralTiles(level, settings, localRandom) {
 export function placeLaneProceduralTiles(level, settings, localRandom) {
   placeBalancedProceduralTiles(level, settings, localRandom);
 
+  const levelWidth = getLevelWidth(level);
   const verticalBands = [4, 10, 16, 22];
   const horizontalBands = [6, 12, 18];
   verticalBands.forEach((bandCol) => {
@@ -607,7 +630,7 @@ export function placeLaneProceduralTiles(level, settings, localRandom) {
         if (level.obstacles[row][bandCol] !== TILE.BASE) level.obstacles[row][bandCol] = null;
         level.floor[row][bandCol] = TILE.ROAD;
       }
-      if (bandCol + 1 < GRID_WIDTH && localRandom() < 0.55) {
+      if (bandCol + 1 < levelWidth && localRandom() < 0.55) {
         if (level.obstacles[row][bandCol + 1] !== TILE.BASE) level.obstacles[row][bandCol + 1] = null;
         level.floor[row][bandCol + 1] = TILE.ROAD;
       }
@@ -624,11 +647,13 @@ export function placeLaneProceduralTiles(level, settings, localRandom) {
 }
 
 export function placeIslandProceduralTiles(level, settings, localRandom) {
+  const levelWidth = getLevelWidth(level);
+  const levelHeight = getLevelHeight(level);
   const clusters = 14;
   const obstacleTypes = [TILE.BRICK, TILE.BRICK, TILE.BUSH, TILE.STEEL, TILE.WATER];
   for (let i = 0; i < clusters; i += 1) {
-    const centerCol = Math.floor(localRandom() * GRID_WIDTH);
-    const centerRow = Math.floor(localRandom() * GRID_HEIGHT);
+    const centerCol = Math.floor(localRandom() * levelWidth);
+    const centerRow = Math.floor(localRandom() * levelHeight);
     const radius = 1 + Math.floor(localRandom() * 3);
     const obstacleType = randomChoice(obstacleTypes);
 
@@ -673,9 +698,35 @@ function paintRoadCell(level, col, row, width = 2) {
   const halfAfter = width - halfBefore - 1;
   for (let y = row - halfBefore; y <= row + halfAfter; y += 1) {
     for (let x = col - halfBefore; x <= col + halfAfter; x += 1) {
-      if (!inBounds(x, y)) continue;
+      if (!inBounds(x, y, level)) continue;
+      if (level.obstacles[y][x] === TILE.WATER) continue; // los caminos no pisan agua
       level.floor[y][x] = TILE.ROAD;
     }
+  }
+}
+
+// Como paintRoadCell pero fuerza limpieza de agua (para puentes sobre el río)
+function paintBridgeCell(level, col, row, width = 2) {
+  const halfBefore = Math.floor((width - 1) / 2);
+  const halfAfter = width - halfBefore - 1;
+  for (let y = row - halfBefore; y <= row + halfAfter; y += 1) {
+    for (let x = col - halfBefore; x <= col + halfAfter; x += 1) {
+      if (!inBounds(x, y, level)) continue;
+      if (level.obstacles[y][x] !== TILE.BASE) level.obstacles[y][x] = null;
+      level.floor[y][x] = TILE.ROAD;
+    }
+  }
+}
+
+function carveBridge(level, waypoints, width = 2) {
+  for (let i = 1; i < waypoints.length; i += 1) {
+    const prev = waypoints[i - 1];
+    const next = waypoints[i];
+    let col = prev.col;
+    let row = prev.row;
+    paintBridgeCell(level, col, row, width);
+    while (col !== next.col) { col += col < next.col ? 1 : -1; paintBridgeCell(level, col, row, width); }
+    while (row !== next.row) { row += row < next.row ? 1 : -1; paintBridgeCell(level, col, row, width); }
   }
 }
 
@@ -707,7 +758,7 @@ function roadNeighbors(level, col, row) {
   [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy]) => {
     const x = col + dx;
     const y = row + dy;
-    if (inBounds(x,y) && level.floor[y][x] === TILE.ROAD) count += 1;
+    if (inBounds(x, y, level) && level.floor[y][x] === TILE.ROAD) count += 1;
   });
   return count;
 }
@@ -722,7 +773,7 @@ function pruneIsolatedWater(level) {
         for (let dx = -1; dx <= 1; dx += 1) {
           if (!dx && !dy) continue;
           const x = col + dx, y = row + dy;
-          if (inBounds(x,y) && level.obstacles[y][x] === TILE.WATER) neighbors += 1;
+          if (inBounds(x, y, level) && level.obstacles[y][x] === TILE.WATER) neighbors += 1;
         }
       }
       if (neighbors === 0) next[row][col] = null;
@@ -787,151 +838,558 @@ function paintLake(level, centerCol, centerRow, radiusX, radiusY, localRandom) {
   }
 }
 
-function generateNormalWater(level, localRandom = Math.random) {
-  const lakeCount = 1 + Math.floor(localRandom() * 3);
-  const maxWater = Math.floor(getLevelWidth(level) * getLevelHeight(level) * 0.35);
-  let painted = 0;
-  for (let i = 0; i < lakeCount; i += 1) {
-    if (painted >= maxWater) break;
-    const radiusX = 3 + Math.floor(localRandom() * 4);
-    const radiusY = 3 + Math.floor(localRandom() * 4);
-    const centerCol = 4 + Math.floor(localRandom() * (getLevelWidth(level) - 8));
-    const centerRow = 4 + Math.floor(localRandom() * (getLevelHeight(level) - 8));
-    paintLake(level, centerCol, centerRow, radiusX, radiusY, localRandom);
-    painted = level.obstacles.flat().filter((t) => t === TILE.WATER).length;
+// ─────────────────────────────────────────────────────────────────────────────
+// SURVIVAL MAP GENERATION — ONLINE-MODE ADAPTED ALGORITHMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function sIsBaseZone(level, col, row) {
+  const ec = getLevelBaseAnchorCol(level);
+  const er = getLevelBaseAnchorRow(level);
+  return col >= ec - 5 && col <= ec + 6 && row >= er - 5;
+}
+
+function sIsSpawnZone(level, col, row) {
+  return getEnemySpawnCenters(level).some(
+    ({ col: sc, row: sr }) => Math.abs(col - sc) <= 3 && Math.abs(row - sr) <= 3
+  );
+}
+
+function sIsProtected(level, col, row) {
+  return sIsBaseZone(level, col, row) || sIsSpawnZone(level, col, row);
+}
+
+// 2×2 road cell; skips water tiles
+function sPaintRoadCell2(level, col, row) {
+  for (let dc = 0; dc < 2; dc += 1) {
+    for (let dr = 0; dr < 2; dr += 1) {
+      const tc = col + dc, tr = row + dr;
+      if (!inBounds(tc, tr, level)) continue;
+      if (level.obstacles[tr][tc] === TILE.WATER) continue;
+      if (level.obstacles[tr][tc] === TILE.BASE || level.obstacles[tr][tc] === TILE.BRICK) continue;
+      level.floor[tr][tc] = TILE.ROAD;
+      level.obstacles[tr][tc] = null;
+      level.overlay[tr][tc] = null;
+    }
   }
-  if (painted > maxWater) {
-    for (let row = 0; row < getLevelHeight(level); row += 1) {
-      for (let col = 0; col < getLevelWidth(level); col += 1) {
-        if (painted <= maxWater) break;
-        if (level.obstacles[row][col] === TILE.WATER && localRandom() < 0.5) {
+}
+
+// 2×2 bridge cell; forces through water
+function sPaintBridgeCell(level, col, row, width = 2) {
+  for (let dc = 0; dc < width; dc += 1) {
+    for (let dr = 0; dr < width; dr += 1) {
+      const tc = col + dc, tr = row + dr;
+      if (!inBounds(tc, tr, level)) continue;
+      if (level.obstacles[tr][tc] === TILE.BASE || level.obstacles[tr][tc] === TILE.BRICK) continue;
+      level.floor[tr][tc] = TILE.ROAD;
+      level.obstacles[tr][tc] = null;
+      level.overlay[tr][tc] = null;
+    }
+  }
+}
+
+// L-shaped path (horizontal first, then vertical), forces through water
+function sSurvivalCarveL(level, fromCol, fromRow, toCol, toRow, width = 2) {
+  const c0 = Math.min(fromCol, toCol), c1 = Math.max(fromCol, toCol);
+  for (let c = c0; c <= c1; c += 1) sPaintBridgeCell(level, c, fromRow, width);
+  const r0 = Math.min(fromRow, toRow), r1 = Math.max(fromRow, toRow);
+  for (let r = r0; r <= r1; r += 1) sPaintBridgeCell(level, toCol, r, width);
+}
+
+function sSurvivalCarveWideCauseway(level, fromCol, fromRow, toCol, toRow, rng, rx = 2, ry = 2) {
+  sSurvivalCarveL(level, fromCol, fromRow, toCol, toRow);
+
+  const c0 = Math.min(fromCol, toCol);
+  const c1 = Math.max(fromCol, toCol);
+  for (let c = c0; c <= c1; c += 2) {
+    sSurvivalPaintIsland(level, c + 1, fromRow + 1, rx, ry, rng);
+  }
+
+  const r0 = Math.min(fromRow, toRow);
+  const r1 = Math.max(fromRow, toRow);
+  for (let r = r0; r <= r1; r += 2) {
+    sSurvivalPaintIsland(level, toCol + 1, r + 1, rx, ry, rng);
+  }
+
+  sSurvivalPaintIsland(level, fromCol + 1, fromRow + 1, rx + 1, ry + 1, rng);
+  sSurvivalPaintIsland(level, toCol + 1, toRow + 1, rx + 1, ry + 1, rng);
+}
+
+// Ragged ellipse island (clears water to ground)
+function sSurvivalPaintIsland(level, cx, cy, rx, ry, rng) {
+  for (let row = cy - ry - 1; row <= cy + ry + 1; row += 1) {
+    for (let col = cx - rx - 1; col <= cx + rx + 1; col += 1) {
+      if (!inBounds(col, row, level)) continue;
+      const nx = (col - cx) / Math.max(1, rx);
+      const ny = (row - cy) / Math.max(1, ry);
+      if ((nx * nx) + (ny * ny) <= 1 + (rng() - 0.5) * 0.18) {
+        if (level.obstacles[row][col] !== TILE.BASE) {
           level.obstacles[row][col] = null;
-          painted -= 1;
+          level.floor[row][col] = TILE.GROUND;
         }
       }
     }
   }
-  pruneIsolatedWater(level);
 }
 
-function generateRiver(level, localRandom = Math.random) {
-  const vertical = localRandom() < 0.5;
-  const width = 3 + Math.floor(localRandom() * 2);
-  if (vertical) {
-    let center = 6 + Math.floor(localRandom() * (getLevelWidth(level) - 12));
-    for (let row = 0; row < getLevelHeight(level); row += 1) {
-      if (localRandom() < 0.35) center = clamp(center + (localRandom() < 0.5 ? -1 : 1), 4, getLevelWidth(level) - 5);
-      for (let x = center - Math.floor(width/2); x <= center + Math.floor(width/2); x += 1) {
-        if (canWriteObstacleAt(level, x, row)) level.obstacles[row][x] = TILE.WATER;
-      }
+// BFS dry path avoiding TILE.WATER; returns array of {col,row} or null
+function sSurvivalFindDryPath(level, fromCol, fromRow, toCol, toRow) {
+  const w = getLevelWidth(level), h = getLevelHeight(level);
+  if (!inBounds(fromCol, fromRow, level) || !inBounds(toCol, toRow, level)) return null;
+  const visited = Array.from({ length: h }, () => Array(w).fill(false));
+  const prev    = Array.from({ length: h }, () => Array(w).fill(null));
+  const queue   = [{ col: fromCol, row: fromRow }];
+  visited[fromRow][fromCol] = true;
+  const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (cur.col === toCol && cur.row === toRow) {
+      const path = [];
+      let node = cur;
+      while (node) { path.unshift(node); node = prev[node.row][node.col]; }
+      return path;
     }
-    const bridgeRows = [8 + Math.floor(localRandom()*5), 16 + Math.floor(localRandom()*4)];
-    bridgeRows.forEach((row) => carveContinuousRoad(level, [{col:0,row},{col:getLevelWidth(level)-1,row}], 2));
-  } else {
-    let center = 5 + Math.floor(localRandom() * (GRID_HEIGHT - 10));
-    for (let col = 0; col < getLevelWidth(level); col += 1) {
-      if (localRandom() < 0.35) center = clamp(center + (localRandom() < 0.5 ? -1 : 1), 4, getLevelHeight(level) - 5);
-      for (let y = center - Math.floor(width/2); y <= center + Math.floor(width/2); y += 1) {
-        if (canWriteObstacleAt(level, col, y)) level.obstacles[y][col] = TILE.WATER;
-      }
+    for (const [dc, dr] of DIRS) {
+      const nc = cur.col + dc, nr = cur.row + dr;
+      if (!inBounds(nc, nr, level) || visited[nr][nc]) continue;
+      if (level.obstacles[nr][nc] === TILE.WATER) continue;
+      visited[nr][nc] = true;
+      prev[nr][nc] = cur;
+      queue.push({ col: nc, row: nr });
     }
-    const bridgeCols = [7 + Math.floor(localRandom()*5), 16 + Math.floor(localRandom()*5)];
-    bridgeCols.forEach((col) => carveContinuousRoad(level, [{col,row:0},{col,row:getLevelHeight(level)-1}], 2));
   }
-  clearWaterOnRoad(level);
-  pruneIsolatedWater(level);
+  return null;
 }
 
-function generateIslandStyle(level, openStyle = true, localRandom = Math.random) {
-  resetLevelToBase(level, TILE.GROUND);
+function sSurvivalCarvePathRoad(level, fromCol, fromRow, toCol, toRow) {
+  const path = sSurvivalFindDryPath(level, fromCol, fromRow, toCol, toRow);
+  if (path) path.forEach(({ col, row }) => sPaintRoadCell2(level, col, row));
+}
+
+// Dense bushes along all water coastlines
+function sSurvivalScatterCoastalBushes(level, rng) {
+  const DIRS8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
   for (let row = 0; row < getLevelHeight(level); row += 1) {
     for (let col = 0; col < getLevelWidth(level); col += 1) {
-      if (level.obstacles[row][col] !== TILE.BASE) level.obstacles[row][col] = TILE.WATER;
+      const obs = level.obstacles[row][col];
+      if (obs === TILE.WATER || obs === TILE.BASE || obs === TILE.BRICK || obs === TILE.STEEL) continue;
+      if (level.floor[row][col] === TILE.ROAD) continue;
+      const nearWater = DIRS8.some(([dr, dc]) => {
+        const nr = row + dr, nc = col + dc;
+        return inBounds(nc, nr, level) && level.obstacles[nr][nc] === TILE.WATER;
+      });
+      if (nearWater && rng() < 0.88) level.overlay[row][col] = TILE.BUSH;
     }
   }
-  const islandCount = openStyle ? 5 : 10;
-  const minRadius = openStyle ? 3 : 2;
-  const maxRadius = openStyle ? 6 : 4;
-  const forced = [
-    { col: getLevelBaseAnchorCol(level) + 1, row: getLevelBaseAnchorRow(level) + 1, rx: 6, ry: 5 },
-    { col: getLevelBaseAnchorCol(level) + 1, row: 1, rx: 6, ry: 5 },
-  ];
-  const islands = [...forced];
-  for (let i = 0; i < islandCount; i += 1) {
-    islands.push({
-      col: 3 + Math.floor(localRandom() * (getLevelWidth(level) - 6)),
-      row: 3 + Math.floor(localRandom() * (getLevelHeight(level) - 6)),
-      rx: minRadius + Math.floor(localRandom() * (maxRadius - minRadius + 1)),
-      ry: minRadius + Math.floor(localRandom() * (maxRadius - minRadius + 1)),
-    });
+}
+
+function boostSurvivalNormalBushes(level, rng) {
+  const w = getLevelWidth(level);
+  const h = getLevelHeight(level);
+
+  for (let i = 0; i < 16; i += 1) {
+    const centerCol = 2 + Math.floor(rng() * Math.max(1, w - 4));
+    const centerRow = 2 + Math.floor(rng() * Math.max(1, h - 4));
+    const radiusX = 2 + Math.floor(rng() * 4);
+    const radiusY = 2 + Math.floor(rng() * 3);
+    paintBushPatch(level, centerCol, centerRow, radiusX, radiusY, rng, 1.18);
   }
-  islands.forEach(({col,row,rx,ry}) => {
-    for (let y = row - ry - 1; y <= row + ry + 1; y += 1) {
-      for (let x = col - rx - 1; x <= col + rx + 1; x += 1) {
-        if (!inBounds(x,y)) continue;
-        const nx = (x-col)/Math.max(1,rx);
-        const ny = (y-row)/Math.max(1,ry);
-        if ((nx*nx)+(ny*ny) <= 1 + (localRandom()-0.5)*0.2 && level.obstacles[y][x] !== TILE.BASE) level.obstacles[y][x] = null;
+
+  const dirs = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+  for (let row = 0; row < h; row += 1) {
+    for (let col = 0; col < w; col += 1) {
+      if (level.obstacles[row][col] === TILE.WATER) continue;
+      if (level.obstacles[row][col] === TILE.BASE || level.obstacles[row][col] === TILE.BRICK || level.obstacles[row][col] === TILE.STEEL) continue;
+      if (level.floor[row][col] === TILE.ROAD) continue;
+
+      let nearWaterCount = 0;
+      dirs.forEach(([dc, dr]) => {
+        const nc = col + dc;
+        const nr = row + dr;
+        if (inBounds(nc, nr, level) && level.obstacles[nr][nc] === TILE.WATER) nearWaterCount += 1;
+      });
+
+      if (nearWaterCount >= 1 && rng() < Math.min(0.52 + (nearWaterCount * 0.08), 0.9)) {
+        level.overlay[row][col] = TILE.BUSH;
       }
+    }
+  }
+}
+
+// ── Algorithm 0: Normal ──────────────────────────────────────────────────────
+// Lakes scattered in the upper portion; BFS dry roads from enemy spawns to base.
+// Paths strictly avoid water — they route around lakes.
+
+function generateSurvivalNormalMap(level, rng) {
+  resetLevelToBase(level, TILE.GROUND);
+  const w = getLevelWidth(level), h = getLevelHeight(level);
+  const ec = getLevelBaseAnchorCol(level), er = getLevelBaseAnchorRow(level);
+
+  // 1–3 lakes in upper 65% of map, away from protected zones
+  const lakeCount = 1 + Math.floor(rng() * 3);
+  for (let i = 0; i < lakeCount; i += 1) {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const cx = 5 + Math.floor(rng() * (w - 10));
+      const cy = 4 + Math.floor(rng() * Math.max(1, h * 0.65 - 8));
+      if (sIsProtected(level, cx, cy)) continue;
+      const isSingleLake = lakeCount === 1;
+      const rx = isSingleLake
+        ? 7 + Math.floor(rng() * 4)
+        : 4 + Math.floor(rng() * 5);
+      const ry = isSingleLake
+        ? 4 + Math.floor(rng() * 3)
+        : 3 + Math.floor(rng() * 3);
+      if (sIsProtected(level, cx, cy - ry - 1) || sIsProtected(level, cx, cy + ry + 1)) continue;
+      if (sIsProtected(level, cx - rx - 1, cy) || sIsProtected(level, cx + rx + 1, cy)) continue;
+      paintLake(level, cx, cy, rx, ry, rng);
+      break;
+    }
+  }
+  pruneIsolatedWater(level);
+
+  // BFS dry roads from each spawn to base — never cross water
+  const spawns = getEnemySpawnCenters(level);
+  const baseTargetCol = ec + 1;
+  const baseTargetRow = clamp(er - 8, 4, er - 2);
+  spawns.forEach(({ col, row }) => {
+    sSurvivalCarvePathRoad(level, col + 1, row + 3, baseTargetCol, baseTargetRow);
+  });
+
+  // Cross-lane connecting spawn corridors mid-map
+  const crossRow = clamp(Math.floor(h * 0.35) + Math.round((rng() - 0.5) * 4), 4, h - 8);
+  sSurvivalCarvePathRoad(level, 2, crossRow, w - 3, crossRow);
+}
+
+// ── Algorithm 1: River (horizontal flow, vertical crossings) ─────────────────
+// River runs left→right across the map. Paths from enemy spawns to base are
+// vertical (perpendicular). 2–3 bridges provide the only crossings.
+// Dense bushes grow along the entire river coastline.
+
+function generateSurvivalRiverMap(level, rng) {
+  resetLevelToBase(level, TILE.GROUND);
+  const w = getLevelWidth(level), h = getLevelHeight(level);
+  const ec = getLevelBaseAnchorCol(level), er = getLevelBaseAnchorRow(level);
+
+  const riverWidth = 4 + Math.floor(rng() * 2);
+  const rHalf = Math.floor(riverWidth / 2);
+  const minCenter = 4 + rHalf;
+  const maxCenter = Math.floor(h * 0.55) - rHalf;
+  let riverCenter = minCenter + Math.floor(rng() * Math.max(1, maxCenter - minCenter));
+  const riverCentersByCol = [];
+
+  // Paint horizontal river with slight vertical drift
+  for (let col = 0; col < w; col += 1) {
+    if (col > 0 && rng() < 0.28) {
+      riverCenter = clamp(riverCenter + (rng() < 0.5 ? -1 : 1), minCenter, maxCenter);
+    }
+    riverCentersByCol[col] = riverCenter;
+    for (let offset = -rHalf; offset <= rHalf; offset += 1) {
+      const row = riverCenter + offset;
+      if (!inBounds(col, row, level)) continue;
+      if (sIsProtected(level, col, row)) continue;
+      level.obstacles[row][col] = TILE.WATER;
+      level.overlay[row][col] = null;
+      level.floor[row][col] = TILE.GROUND;
+    }
+  }
+  pruneIsolatedWater(level);
+
+  // 2–3 vertical bridges (perpendicular to the horizontal river)
+  const bridgeCount = 2 + Math.floor(rng() * 2);
+  const usedBridgeCols = [];
+  let safety = 0;
+  while (usedBridgeCols.length < bridgeCount && safety < 300) {
+    safety += 1;
+    const bc = 4 + Math.floor(rng() * (w - 8));
+    if (usedBridgeCols.every((c) => Math.abs(c - bc) >= 8)) usedBridgeCols.push(bc);
+  }
+  usedBridgeCols.forEach((bc) => {
+    const bridgeWidth = rng() < 0.28 ? 3 : 2;
+    const rc = riverCentersByCol[bc] ?? riverCenter;
+    for (let row = Math.max(0, rc - rHalf - 1); row <= Math.min(h - 1, rc + rHalf + 1); row += 1) {
+      sPaintBridgeCell(level, bc, row, bridgeWidth);
     }
   });
-  carveContinuousRoad(level, [{col:getLevelBaseAnchorCol(level)+1,row:getLevelBaseAnchorRow(level)+5},{col:Math.floor(getLevelWidth(level) / 2),row:Math.floor(getLevelHeight(level) / 2)},{col:getLevelBaseAnchorCol(level)+1,row:4}],2);
-  if (!openStyle) {
-    carveContinuousRoad(level, [{col:4,row:Math.floor(getLevelHeight(level) / 2)},{col:getLevelWidth(level)-5,row:Math.floor(getLevelHeight(level) / 2)}],2);
-  }
-  clearWaterOnRoad(level);
+
+  // Vertical paths: each spawn → nearest bridge → base
+  const spawns = getEnemySpawnCenters(level);
+  const baseTargetRow = clamp(er - 6, 2, er - 2);
+  const baseTargetCol = ec + 1;
+  spawns.forEach(({ col: sc, row: sr }) => {
+    const bc = usedBridgeCols.reduce(
+      (best, c) => Math.abs(c - sc) < Math.abs(best - sc) ? c : best,
+      usedBridgeCols[0]
+    );
+    const rc = riverCentersByCol[bc] ?? riverCenter;
+    // Above river: L from spawn to bridge column entry
+    sSurvivalCarveL(level, sc + 1, sr + 2, bc, Math.max(0, rc - rHalf - 1));
+    // Below river: L from bridge exit to base
+    sSurvivalCarveL(level, bc, Math.min(h - 1, rc + rHalf + 1), baseTargetCol, baseTargetRow);
+  });
 }
 
-function placeObstaclesAlongTerrain(level, settings, localRandom = Math.random, includeWater = false) {
-  const { brickChance, steelChance } = getSurvivalDensitySettings(settings);
-  for (let row = 0; row < getLevelHeight(level); row += 1) {
-    for (let col = 0; col < getLevelWidth(level); col += 1) {
-      if (level.floor[row][col] === TILE.ROAD) continue;
-      if (level.obstacles[row][col] === TILE.BASE || level.obstacles[row][col] === TILE.WATER) continue;
-      if (localRandom() < steelChance * 0.55) level.obstacles[row][col] = TILE.STEEL;
-      else if (localRandom() < brickChance * 0.65) level.obstacles[row][col] = TILE.BRICK;
+// ── Algorithm 2: Open Island ──────────────────────────────────────────────────
+// Everything is water. Base has a large island at the bottom center.
+// Three large enemy islands at the top (left, center, right).
+// All islands interconnected.
+
+function generateSurvivalOpenIslandMap(level, rng) {
+  resetLevelToBase(level, TILE.GROUND);
+  const w = getLevelWidth(level), h = getLevelHeight(level);
+  const ec = getLevelBaseAnchorCol(level), er = getLevelBaseAnchorRow(level);
+
+  // Fill map with water (protected zones stay as ground)
+  for (let row = 0; row < h; row += 1) {
+    for (let col = 0; col < w; col += 1) {
+      if (sIsProtected(level, col, row)) continue;
+      if (level.obstacles[row][col] === TILE.BASE) continue;
+      level.obstacles[row][col] = TILE.WATER;
+      level.overlay[row][col] = null;
+      level.floor[row][col] = TILE.GROUND;
+    }
+  }
+
+  // Large base island at bottom center
+  const baseRx = 11 + Math.floor(rng() * 3);
+  const baseRy = 5 + Math.floor(rng() * 2);
+  const baseCx = ec + 1;
+  const baseCy = er - baseRy - 1;
+  sSurvivalPaintIsland(level, baseCx, baseCy, baseRx, baseRy, rng);
+
+  // Side landmasses near the lower left/right thirds to avoid dead-water voids.
+  const lowerIslandRy = 4 + Math.floor(rng() * 2);
+  const lowerIslandRx = 7 + Math.floor(rng() * 2);
+  const lowerIslandCy = clamp(baseCy + 2, h - 8, h - 5);
+  const lowerLeftCx = clamp(Math.floor(w * 0.17), lowerIslandRx + 2, Math.max(lowerIslandRx + 2, baseCx - baseRx - 4));
+  const lowerRightCx = clamp(Math.floor(w * 0.83), Math.min(baseCx + baseRx + 4, w - lowerIslandRx - 3), w - lowerIslandRx - 3);
+
+  const lowerIslands = [
+    { col: lowerLeftCx, row: lowerIslandCy },
+    { col: lowerRightCx, row: lowerIslandCy },
+  ];
+  lowerIslands.forEach(({ col, row }) => {
+    sSurvivalPaintIsland(level, col, row, lowerIslandRx, lowerIslandRy, rng);
+  });
+
+  // Three enemy islands at top matching spawn positions
+  const spawns = getEnemySpawnCenters(level);
+  const enemyRx = 7 + Math.floor(rng() * 3);
+  const enemyRy = 4 + Math.floor(rng() * 2);
+  const enemyIslands = spawns.map(({ col }) => {
+    const ic = clamp(col + 1, enemyRx + 2, w - enemyRx - 3);
+    const ir = 3 + Math.floor(rng() * 2);
+    sSurvivalPaintIsland(level, ic, ir, enemyRx, enemyRy, rng);
+    return { col: ic, row: ir };
+  });
+
+  // Connect base island to lower side islands so the bottom thirds can host land.
+  const baseLowerRow = Math.min(h - 3, baseCy + baseRy - 1);
+  lowerIslands.forEach(({ col, row }) => {
+    sSurvivalCarveWideCauseway(level, baseCx, baseLowerRow, col, Math.max(1, row - lowerIslandRy), rng, 2, 2);
+  });
+
+  // Connect base island to each enemy island with wide, tank-safe causeways.
+  const baseTopRow = Math.max(0, baseCy - baseRy - 1);
+  enemyIslands.forEach(({ col: eic, row: eir }) => {
+    sSurvivalCarveWideCauseway(level, baseCx, baseTopRow, eic, eir + enemyRy + 1, rng, 2, 2);
+  });
+
+  // Connect enemy islands to each other horizontally with the same generous width.
+  for (let i = 0; i < enemyIslands.length - 1; i += 1) {
+    const a = enemyIslands[i], b = enemyIslands[i + 1];
+    sSurvivalCarveWideCauseway(level, a.col, a.row, b.col, b.row, rng, 2, 2);
+  }
+}
+
+// ── Algorithm 3: Archipelago ──────────────────────────────────────────────────
+// Everything is water. Base island at bottom center; 3 enemy spawn islands at top.
+// 2–3 central islands and 2–3 lower islands create a chain of stepping stones.
+// All islands connected to form traversable paths enemy→center→lower→base.
+
+function generateSurvivalArchipelagoMap(level, rng) {
+  resetLevelToBase(level, TILE.GROUND);
+  const w = getLevelWidth(level), h = getLevelHeight(level);
+  const ec = getLevelBaseAnchorCol(level), er = getLevelBaseAnchorRow(level);
+
+  // Fill map with water
+  for (let row = 0; row < h; row += 1) {
+    for (let col = 0; col < w; col += 1) {
+      if (sIsProtected(level, col, row)) continue;
+      if (level.obstacles[row][col] === TILE.BASE) continue;
+      level.obstacles[row][col] = TILE.WATER;
+      level.overlay[row][col] = null;
+      level.floor[row][col] = TILE.GROUND;
+    }
+  }
+
+  const isRx = 4, isRy = 3;
+
+  // Base island at bottom center
+  const baseRx = 7 + Math.floor(rng() * 2);
+  const baseRy = 4 + Math.floor(rng() * 2);
+  const baseCx = ec + 1;
+  const baseCy = er - baseRy - 2;
+  sSurvivalPaintIsland(level, baseCx, baseCy, baseRx, baseRy, rng);
+
+  // 3 enemy spawn islands at top
+  const spawns = getEnemySpawnCenters(level);
+  const topIslands = spawns.map(({ col }) => {
+    const ic = clamp(col + 1, isRx + 2, w - isRx - 3);
+    const ir = 3;
+    sSurvivalPaintIsland(level, ic, ir, isRx + 1, isRy, rng);
+    return { col: ic, row: ir };
+  });
+
+  // 2–3 central islands
+  const centralCount = 2 + (rng() < 0.5 ? 0 : 1);
+  const centralRowTarget = Math.floor(h * 0.5);
+  const centralCols = [Math.floor(w * 0.22), Math.floor(w * 0.5), Math.floor(w * 0.78)].slice(0, centralCount);
+  const centralIslands = centralCols.map((cc) => {
+    const ic = cc + Math.round((rng() - 0.5) * 4);
+    const ir = centralRowTarget + Math.round((rng() - 0.5) * 4);
+    sSurvivalPaintIsland(level, ic, ir, isRx, isRy, rng);
+    return { col: ic, row: ir };
+  });
+
+  // 2–3 lower islands between center and base
+  const lowerCount = 2 + (rng() < 0.5 ? 0 : 1);
+  const lowerRowTarget = Math.floor(h * 0.73);
+  const lowerCols = [Math.floor(w * 0.28), Math.floor(w * 0.5), Math.floor(w * 0.72)].slice(0, lowerCount);
+  const lowerIslands = lowerCols.map((lc) => {
+    const ic = lc + Math.round((rng() - 0.5) * 4);
+    const ir = lowerRowTarget + Math.round((rng() - 0.5) * 3);
+    sSurvivalPaintIsland(level, ic, ir, isRx, isRy, rng);
+    return { col: ic, row: ir };
+  });
+
+  // Connect top islands horizontally to each other
+  for (let i = 0; i < topIslands.length - 1; i += 1) {
+    sSurvivalCarveL(level, topIslands[i].col, topIslands[i].row, topIslands[i + 1].col, topIslands[i + 1].row);
+  }
+
+  // Connect top islands → nearest central island
+  topIslands.forEach((ti) => {
+    const nearest = centralIslands.reduce((best, ci) =>
+      Math.abs(ci.col - ti.col) < Math.abs(best.col - ti.col) ? ci : best
+    );
+    sSurvivalCarveL(level, ti.col, ti.row, nearest.col, nearest.row);
+  });
+
+  // Connect central islands horizontally to each other
+  for (let i = 0; i < centralIslands.length - 1; i += 1) {
+    sSurvivalCarveL(level, centralIslands[i].col, centralIslands[i].row, centralIslands[i + 1].col, centralIslands[i + 1].row);
+  }
+
+  // Connect central islands → nearest lower island
+  centralIslands.forEach((ci) => {
+    const nearest = lowerIslands.reduce((best, li) =>
+      Math.abs(li.col - ci.col) < Math.abs(best.col - ci.col) ? li : best
+    );
+    sSurvivalCarveL(level, ci.col, ci.row, nearest.col, nearest.row);
+  });
+
+  // Connect lower islands horizontally to each other
+  for (let i = 0; i < lowerIslands.length - 1; i += 1) {
+    sSurvivalCarveL(level, lowerIslands[i].col, lowerIslands[i].row, lowerIslands[i + 1].col, lowerIslands[i + 1].row);
+  }
+
+  // Connect lower islands → base island
+  const baseCyTop = Math.max(0, baseCy - baseRy - 1);
+  lowerIslands.forEach((li) => {
+    sSurvivalCarveL(level, li.col, li.row, baseCx, baseCyTop);
+  });
+}
+
+function placeStructuredObstacles(level, localRandom, config = {}) {
+  const {
+    structureCount = [18, 24],
+    compoundChance = 0.75,
+    clusterChance = 0.45,
+    minSpacing = 3,
+  } = config;
+
+  const w = getLevelWidth(level);
+  const h = getLevelHeight(level);
+  const eagleCol = getLevelBaseAnchorCol(level);
+  const eagleRow = getLevelBaseAnchorRow(level);
+
+  function isBaseZone(col, row) {
+    return col >= eagleCol - 5 && col <= eagleCol + 6 && row >= eagleRow - 5;
+  }
+
+  function canPlaceCell(col, row) {
+    if (col < 0 || col >= w || row < 0 || row >= h) return false;
+    if (isBaseZone(col, row)) return false;
+    if (level.obstacles[row][col] === TILE.WATER) return false;
+    if (level.floor[row][col] === TILE.ROAD) return false;
+    if (level.obstacles[row][col] !== null) return false;
+    for (let dr = -1; dr <= 1; dr += 1) {
+      for (let dc = -1; dc <= 1; dc += 1) {
+        if (isBaseZone(col + dc, row + dr)) return false;
+      }
+    }
+    return true;
+  }
+
+  function canPlaceBlock(cells) { return cells.every(({ col, row }) => canPlaceCell(col, row)); }
+  function placeBlock(cells, tile) { cells.forEach(({ col, row }) => { level.obstacles[row][col] = tile; }); }
+
+  const s2x1    = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }];
+  const s1x2    = (c, r) => [{ col: c, row: r }, { col: c, row: r+1 }];
+  const s2x2    = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c, row: r+1 }, { col: c+1, row: r+1 }];
+  const sL1     = (c, r) => [{ col: c, row: r }, { col: c, row: r+1 }, { col: c, row: r+2 }, { col: c+1, row: r+2 }];
+  const sL2     = (c, r) => [{ col: c+1, row: r }, { col: c+1, row: r+1 }, { col: c+1, row: r+2 }, { col: c, row: r+2 }];
+  const sL3     = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c+2, row: r }, { col: c, row: r+1 }];
+  const sL4     = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c+2, row: r }, { col: c+2, row: r+1 }];
+  const sT1     = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c+2, row: r }, { col: c+1, row: r+1 }];
+  const sT2     = (c, r) => [{ col: c+1, row: r }, { col: c+1, row: r+1 }, { col: c, row: r+1 }, { col: c+2, row: r+1 }];
+  const sLine3h = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c+2, row: r }];
+  const sLine4h = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c+2, row: r }, { col: c+3, row: r }];
+  const sLine3v = (c, r) => [{ col: c, row: r }, { col: c, row: r+1 }, { col: c, row: r+2 }];
+  const sLine4v = (c, r) => [{ col: c, row: r }, { col: c, row: r+1 }, { col: c, row: r+2 }, { col: c, row: r+3 }];
+  const sZ      = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c+1, row: r+1 }, { col: c+2, row: r+1 }];
+  const sS      = (c, r) => [{ col: c+1, row: r }, { col: c+2, row: r }, { col: c, row: r+1 }, { col: c+1, row: r+1 }];
+  const sPlus   = (c, r) => [{ col: c+1, row: r }, { col: c, row: r+1 }, { col: c+1, row: r+1 }, { col: c+2, row: r+1 }, { col: c+1, row: r+2 }];
+  const sRect3x2 = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c+2, row: r }, { col: c, row: r+1 }, { col: c+1, row: r+1 }, { col: c+2, row: r+1 }];
+  const sRect2x3 = (c, r) => [{ col: c, row: r }, { col: c+1, row: r }, { col: c, row: r+1 }, { col: c+1, row: r+1 }, { col: c, row: r+2 }, { col: c+1, row: r+2 }];
+
+  const ISOLATED = [s2x1, s1x2, s2x2];
+  const COMPOUND = [sL1, sL2, sL3, sL4, sT1, sT2, sLine3h, sLine4h, sLine3v, sLine4v, sZ, sS, sPlus, sRect3x2, sRect2x3];
+  const TILES = [TILE.BRICK, TILE.BRICK, TILE.BRICK, TILE.BRICK, TILE.STEEL, TILE.STEEL];
+
+  const total = structureCount[0] + Math.floor(localRandom() * (structureCount[1] - structureCount[0] + 1));
+  const placedPositions = [];
+  let placed = 0;
+  let attempts = 0;
+
+  function tryPlace(col, row, allowClose = false) {
+    if (!allowClose && placedPositions.some((p) => Math.abs(p.col - col) < minSpacing && Math.abs(p.row - row) < minSpacing)) return false;
+    const tile = TILES[Math.floor(localRandom() * TILES.length)];
+    const pool = localRandom() < compoundChance ? COMPOUND : ISOLATED;
+    const cells = pool[Math.floor(localRandom() * pool.length)](col, row);
+    if (!canPlaceBlock(cells)) return false;
+    placeBlock(cells, tile);
+    placedPositions.push({ col, row });
+    placed += 1;
+    return true;
+  }
+
+  while (placed < total && attempts < total * 60) {
+    attempts += 1;
+    const col = 2 + Math.floor(localRandom() * (w - 4));
+    const row = 2 + Math.floor(localRandom() * (h - 4));
+    if (!tryPlace(col, row)) continue;
+    if (localRandom() < clusterChance) {
+      const clusterSize = 1 + Math.floor(localRandom() * 2);
+      for (let k = 0; k < clusterSize; k += 1) {
+        const dc = Math.floor(localRandom() * 7) - 3;
+        const dr = Math.floor(localRandom() * 7) - 3;
+        if (dc === 0 && dr === 0) continue;
+        tryPlace(col + dc, row + dr, true);
+      }
     }
   }
 }
 
-function generateConnectedRoads(level, localRandom = Math.random, crossChance = 0.65) {
-  const vertical = localRandom() < 0.5;
-  if (vertical) {
-    const c0 = 4 + Math.floor(localRandom() * (getLevelWidth(level) - 8));
-    carveContinuousRoad(level, [
-      { col: c0, row: 0 },
-      { col: clamp(c0 + Math.round((localRandom()-0.5)*6),2,getLevelWidth(level)-3), row: 8 },
-      { col: clamp(c0 + Math.round((localRandom()-0.5)*8),2,getLevelWidth(level)-3), row: 16 },
-      { col: clamp(c0 + Math.round((localRandom()-0.5)*6),2,getLevelWidth(level)-3), row: getLevelHeight(level)-1 },
-    ], 2);
-    if (localRandom() < crossChance) {
-      const row = 7 + Math.floor(localRandom() * (getLevelHeight(level) - 14));
-      carveContinuousRoad(level, [
-        { col: 0, row },
-        { col: 8, row: clamp(row + Math.round((localRandom()-0.5)*4),2,getLevelHeight(level)-3) },
-        { col: Math.min(17, getLevelWidth(level) - 3), row: clamp(row + Math.round((localRandom()-0.5)*4),2,getLevelHeight(level)-3) },
-        { col: getLevelWidth(level)-1, row },
-      ], 2);
-    }
-  } else {
-    const r0 = 4 + Math.floor(localRandom() * (getLevelHeight(level) - 8));
-    carveContinuousRoad(level, [
-      { col: 0, row: r0 },
-      { col: 8, row: clamp(r0 + Math.round((localRandom()-0.5)*6),2,getLevelHeight(level)-3) },
-      { col: 16, row: clamp(r0 + Math.round((localRandom()-0.5)*8),2,getLevelHeight(level)-3) },
-      { col: getLevelWidth(level)-1, row: clamp(r0 + Math.round((localRandom()-0.5)*6),2,getLevelHeight(level)-3) },
-    ], 2);
-    if (localRandom() < crossChance) {
-      const col = 7 + Math.floor(localRandom() * (getLevelWidth(level) - 14));
-      carveContinuousRoad(level, [
-        { col, row: 0 },
-        { col: clamp(col + Math.round((localRandom()-0.5)*4),2,getLevelWidth(level)-3), row: 8 },
-        { col: clamp(col + Math.round((localRandom()-0.5)*4),2,getLevelWidth(level)-3), row: 17 },
-        { col, row: getLevelHeight(level)-1 },
-      ], 2);
-    }
-  }
-}
 
 
 
@@ -947,26 +1405,34 @@ function sanitizeBushOverlay(level) {
   }
 }
 
+// Survival map (46×26) es ~1.77× más grande que online (26×26), ajustamos densidad proporcionalmente
+const SURVIVAL_OBSTACLE_CONFIGS = [
+  { structureCount: [38, 52], compoundChance: 0.8,  clusterChance: 0.55, minSpacing: 3 },
+  { structureCount: [24, 35], compoundChance: 0.75, clusterChance: 0.45, minSpacing: 3 },
+  { structureCount: [18, 28], compoundChance: 0.7,  clusterChance: 0.4,  minSpacing: 4 },
+  { structureCount: [10, 18], compoundChance: 0.65, clusterChance: 0.3,  minSpacing: 4 },
+];
+
 function generateStyle(level, settings, algorithmIndex, localRandom = Math.random) {
+  const obstacleConfig = SURVIVAL_OBSTACLE_CONFIGS[algorithmIndex] ?? SURVIVAL_OBSTACLE_CONFIGS[0];
   if (algorithmIndex === 0) {
-    resetLevelToBase(level, TILE.GROUND);
-    generateNormalWater(level, localRandom);
-    generateConnectedRoads(level, localRandom, 0.5);
-    placeObstaclesAlongTerrain(level, settings, localRandom);
+    generateSurvivalNormalMap(level, localRandom);
   } else if (algorithmIndex === 1) {
-    resetLevelToBase(level, TILE.GROUND);
-    generateConnectedRoads(level, localRandom, 0.35);
-    generateRiver(level, localRandom);
-    placeObstaclesAlongTerrain(level, settings, localRandom);
+    generateSurvivalRiverMap(level, localRandom);
   } else if (algorithmIndex === 2) {
-    generateIslandStyle(level, true, localRandom);
-    placeObstaclesAlongTerrain(level, settings, localRandom);
+    generateSurvivalOpenIslandMap(level, localRandom);
   } else {
-    generateIslandStyle(level, false, localRandom);
-    placeObstaclesAlongTerrain(level, settings, localRandom);
+    generateSurvivalArchipelagoMap(level, localRandom);
   }
+  placeStructuredObstacles(level, localRandom, obstacleConfig);
   connectSpawnRoads(level, localRandom);
   scatterBushOverlay(level, settings, localRandom);
+  if (algorithmIndex === 0) {
+    boostSurvivalNormalBushes(level, localRandom);
+    sSurvivalScatterCoastalBushes(level, localRandom);
+  } else if (algorithmIndex >= 1) {
+    sSurvivalScatterCoastalBushes(level, localRandom);
+  }
   sanitizeBushOverlay(level);
 }
 

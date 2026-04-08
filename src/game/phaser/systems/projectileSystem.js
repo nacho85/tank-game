@@ -15,6 +15,7 @@ import {
   getLevelWidth,
   inBounds,
   isBaseAnchorCell,
+  isBaseFortressCell,
   isDestructibleTile,
   worldToGridCol,
   worldToGridRow,
@@ -23,6 +24,7 @@ import { vectorLength } from "../shared/math";
 import { getOnlineBaseDefByAnchor } from "../modes/onlineLevel";
 import { registerBullet, unregisterBullet } from "../core/state/matchState";
 import { createBulletState, getWeaponConfigForTankType, stepBulletState } from "../core/sim/weaponSystem";
+import { showGameOverBanner } from "../ui/hudRenderer";
 
 // Desplazamiento perpendicular (px) entre las dos balas del disparo doble.
 // Tiene que coincidir con el valor de playerUpgrades si se importa desde allá,
@@ -89,7 +91,7 @@ function spawnOneBullet(scene, tank, angleRad, perpOffsetPx) {
 //
 // Para enemigos, la lógica de cooldown es idéntica a antes.
 // ─────────────────────────────────────────────────────────────────────────────
-export function fireBullet(scene, tank) {
+export function fireBullet(scene, tank, angleRad = tank?.turretAngleRad) {
   if (!scene.canTankFire(tank)) return;
 
   const isPlayer = tank.type === "player" || tank.type === "player2";
@@ -112,13 +114,14 @@ export function fireBullet(scene, tank) {
   scene.noteCombatShot(tank.type);
 
   const count = isPlayer ? (tank.bulletCount ?? 1) : 1;
+  const bulletAngle = angleRad ?? tank.turretAngleRad;
 
   if (count >= 2) {
     // Disparo doble: dos balas simétricas perpendiculares al cañón
-    spawnOneBullet(scene, tank, tank.turretAngleRad, -DOUBLE_SHOT_SPREAD_PX);
-    spawnOneBullet(scene, tank, tank.turretAngleRad, +DOUBLE_SHOT_SPREAD_PX);
+    spawnOneBullet(scene, tank, bulletAngle, -DOUBLE_SHOT_SPREAD_PX);
+    spawnOneBullet(scene, tank, bulletAngle, +DOUBLE_SHOT_SPREAD_PX);
   } else {
-    spawnOneBullet(scene, tank, tank.turretAngleRad, 0);
+    spawnOneBullet(scene, tank, bulletAngle, 0);
   }
 }
 
@@ -181,21 +184,36 @@ export function updateBullets(scene, delta) {
 
     const obstacle = scene.level.obstacles[row][col];
     if (obstacle && obstacle !== TILE.WATER) {
-      if (isDestructibleTile(obstacle)) {
+      const fortressProtected = !!scene.activePowerEffects?.shovel && isBaseFortressCell(scene.level, col, row);
+      if (isDestructibleTile(obstacle) && !fortressProtected) {
         // Ladrillo: cualquier bala lo destruye
         scene.noteCombatBrickShot(bullet.ownerType);
         scene.level.obstacles[row][col] = null;
         scene.redrawObstacles();
         scene.enemies.forEach((enemy) => scene.clearEnemyNavigationStuckState(enemy));
-      } else if (bullet.canDestroyStone && obstacle === TILE.STEEL) {
+      } else if (bullet.canDestroyStone && obstacle === TILE.STEEL && !fortressProtected) {
         // Acero/piedra: sólo balas de star-3 lo destruyen
         scene.noteCombatBrickShot(bullet.ownerType);
         scene.level.obstacles[row][col] = null;
         scene.redrawObstacles();
         scene.enemies.forEach((enemy) => scene.clearEnemyNavigationStuckState(enemy));
       } else if (obstacle === TILE.BASE) {
+        const baseCenterX = scene.baseSprite?.x ?? bigCellCenterX(col, scene.boardOriginX);
+        const baseCenterY = scene.baseSprite?.y ?? bigCellCenterY(row, scene.boardOriginY);
+        for (let baseRow = 0; baseRow < getLevelHeight(scene.level); baseRow += 1) {
+          for (let baseCol = 0; baseCol < getLevelWidth(scene.level); baseCol += 1) {
+            if (scene.level.obstacles[baseRow][baseCol] === TILE.BASE) {
+              scene.level.obstacles[baseRow][baseCol] = null;
+            }
+          }
+        }
+        scene.redrawObstacles();
+        scene.spawnTankHitExplosion(baseCenterX, baseCenterY);
+        scene.spawnTankHitExplosion(baseCenterX - 18, baseCenterY + 12);
+        scene.spawnTankHitExplosion(baseCenterX + 18, baseCenterY - 10);
         scene.isGameOver = true;
         scene.showMessage("La base fue destruida");
+        showGameOverBanner(scene, scene.destroyedEnemiesCount || 0, 1100);
         scene.saveSettings();
         scene.saveCombatStats();
         scene.time.delayedCall(1100, () => scene.scene.restart());
@@ -238,7 +256,10 @@ export function updateBullets(scene, delta) {
       if (hitPlayerTank) {
         bulletsToRemove.add(i);
         scene.noteCombatHit(bullet.ownerType);
-        scene.handlePlayerHit(hitPlayerTank);
+        // Escudo activo: la bala se absorbe pero el jugador no recibe daño
+        if (!hitPlayerTank.shield) {
+          scene.handlePlayerHit(hitPlayerTank);
+        }
         continue;
       }
     } else {
@@ -251,6 +272,9 @@ export function updateBullets(scene, delta) {
         scene.noteCombatHit(bullet.ownerType);
         if (hitEnemy.isBoss) {
           scene.damageBoss(hitEnemy, 1, bullet.ownerType);
+        } else if (hitEnemy.isArmored) {
+          // Primer impacto: quitar armadura y soltar poder (no muere)
+          scene.removeEnemyArmor(hitEnemy);
         } else {
           scene.handleEnemyDestroyed(hitEnemy, bullet.ownerType);
         }

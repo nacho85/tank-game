@@ -7,9 +7,41 @@ import {
   applyBaseFortressToFineLevel,
   clearFineRect,
   createProceduralSurvivalLevel,
-  worldToGridCol,
-  worldToGridRow,
 } from "../shared/levelGeneration";
+import { applyPlayerUpgrade } from "../factories/playerFactory";
+import { clearEntityCollections, syncSceneStatsToMatchState } from "../core/state/matchState";
+import { SPAWN_SHIELD_DURATION_MS, applyShield, initPowerUpState, cleanupPowerUps } from "../systems/powerUpSystem";
+import { showSurvivalWaveBanner } from "../ui/hudRenderer";
+
+function rebuildSurvivalWaveActors(scene) {
+  const friendlyStates = [
+    scene.player ? { slot: 1, starCount: Math.max(0, Math.round(Number(scene.player.starCount || 0))) } : null,
+    scene.playerTwo ? { slot: 2, starCount: Math.max(0, Math.round(Number(scene.playerTwo.starCount || 0))) } : null,
+  ].filter(Boolean);
+
+  Object.values(scene.playerRespawnEvents || {}).forEach((event) => event?.remove?.(false));
+  scene.playerRespawnEvents = { 1: null, 2: null };
+  (scene.pendingEnemySpawnEvents || []).forEach((event) => event?.remove?.(false));
+  scene.pendingEnemySpawnEvents = [];
+
+  scene.getFriendlyTanks().forEach((tank) => scene.destroyPlayerTankVisuals(tank));
+  scene.enemies.forEach((enemy) => enemy?.container?.destroy?.());
+  scene.enemies = [];
+  scene.boss = null;
+  scene.isBossBattle = false;
+  clearEntityCollections(scene);
+
+  friendlyStates.forEach(({ slot, starCount }) => {
+    const tank = scene.createPlayerTankForSlot(slot);
+    if (starCount > 0) {
+      applyPlayerUpgrade(scene, tank, starCount);
+    }
+    applyShield(scene, tank, SPAWN_SHIELD_DURATION_MS, { flickerOnExpire: false });
+  });
+
+  scene.nextEnemySpawnIndex = 0;
+  scene.fillEnemyWaveSlots();
+}
 
 export function loadSurvivalMode(scene) {
   scene.clearLevelVisuals();
@@ -23,38 +55,45 @@ export function loadSurvivalMode(scene) {
   scene.destroyedEnemiesCount = 0;
   scene.levelText.setText("Modo Survival");
   scene.drawBoard();
+
+  // Inicializar sistema de power-ups
+  initPowerUpState(scene);
+
   if (scene.playerLivesRemaining > 0) {
     scene.createPlayer();
+    applyShield(scene, scene.player, SPAWN_SHIELD_DURATION_MS, { flickerOnExpire: false });
   }
-  if (scene.isKeyboardControlledSlot(2) && scene.playerTwoLivesRemaining > 0) {
-    scene.createPlayerTwo();
-  }
+
   scene.fillEnemyWaveSlots();
   scene.updateWaveText();
   scene.updateLivesText();
   scene.updateCoopText();
+  showSurvivalWaveBanner(scene, scene.survivalWaveIndex, 2000);
 }
 
 export function reshuffleSurvivalMap(scene) {
   if (scene.currentGameMode !== "survival") return;
 
-  const reservedWorldPoints = [
-    scene.player ? { x: scene.player.x, y: scene.player.y } : null,
-    scene.playerTwo ? { x: scene.playerTwo.x, y: scene.playerTwo.y } : null,
-    ...scene.enemies.map((enemy) => ({ x: enemy.x, y: enemy.y })),
-  ].filter(Boolean);
+  scene.survivalWaveIndex = Math.max(1, Math.round(Number(scene.survivalWaveIndex || 1))) + 1;
 
   const newLevel = createProceduralSurvivalLevel(scene.settings);
-  reservedWorldPoints.forEach((point) => {
-    const col = worldToGridCol(point.x, scene.boardOriginX);
-    const row = worldToGridRow(point.y, scene.boardOriginY);
-    clearFineRect(newLevel, col - 1, row - 1, 4, 4);
+  [1, 2].forEach((slot) => {
+    const spawn = scene.getPlayerSpawnForSlot(slot);
+    clearFineRect(newLevel, spawn.col - 1, spawn.row - 1, 4, 4);
   });
+  applyBaseFortressToFineLevel(newLevel, TILE.BRICK);
 
   scene.level = newLevel;
   scene.destroyAllBullets();
+  // Limpiar power-ups del mapa anterior y reiniciar efectos temporales
+  cleanupPowerUps(scene);
+  initPowerUpState(scene);
   scene.drawBoard();
+  rebuildSurvivalWaveActors(scene);
+  syncSceneStatsToMatchState(scene);
+  scene.updateWaveText();
   scene.showMessage("Mapa remezclado");
+  showSurvivalWaveBanner(scene, scene.survivalWaveIndex, 2000);
 }
 
 export function destroyAllBullets(scene) {

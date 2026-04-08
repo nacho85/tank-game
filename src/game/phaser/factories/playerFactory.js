@@ -61,6 +61,7 @@ export function createPlayerTankForSlot(scene, slot = 1) {
     // Un upgrade sólo necesita modificarlas + llamar a swapTankSprites.
     starCount:       0,
     bulletCount:     tier.bulletCount,
+    bulletLimit:     tier.bulletLimit,
     bulletSpeed:     tier.bulletSpeed,
     fireCooldown:    tier.fireCooldown,
     canDestroyStone: tier.canDestroyStone,
@@ -119,6 +120,7 @@ export function applyPlayerUpgrade(scene, tank, starCount) {
   // 1. Stats de disparo
   tank.starCount       = tier.starLevel;
   tank.bulletCount     = tier.bulletCount;
+  tank.bulletLimit     = tier.bulletLimit;
   tank.bulletSpeed     = tier.bulletSpeed;
   tank.fireCooldown    = tier.fireCooldown;
   tank.canDestroyStone = tier.canDestroyStone;

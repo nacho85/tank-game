@@ -1,15 +1,22 @@
 import { PLAYER_RESPAWN_DELAY } from "../shared/constants";
 import { bigCellCenterX, bigCellCenterY } from "../shared/levelGeneration";
 import { syncSceneStatusToMatchState, unregisterTank } from "../core/state/matchState";
+import { refreshLocalTopHud, showGameOverBanner } from "../ui/hudRenderer";
+import { SPAWN_SHIELD_DURATION_MS, applyShield } from "./powerUpSystem";
 
 export function updateLivesText(scene) {
   if (!scene.livesText) return;
   const total = scene.getConfiguredStartingLives();
-  const remainingP1 = Math.max(0, Math.min(total, scene.playerLivesRemaining || 0));
-  const remainingP2 = Math.max(0, Math.min(total, scene.playerTwoLivesRemaining || 0));
+  const remainingP1 = Math.max(0, scene.playerLivesRemaining || 0);
+  const remainingP2 = Math.max(0, scene.playerTwoLivesRemaining || 0);
   const respawnP1 = scene.playerRespawnEvents?.[1] ? " · P1 reapareciendo" : "";
   const respawnP2 = scene.playerRespawnEvents?.[2] ? " · P2 reapareciendo" : "";
   scene.livesText.setText(`Vidas P1: ${remainingP1}/${total}\nVidas P2: ${remainingP2}/${total}${respawnP1}${respawnP2}`);
+  if (scene.currentGameMode === "survival") {
+    scene.updateWaveText?.();
+  } else {
+    refreshLocalTopHud(scene);
+  }
 }
 
 export function destroyPlayerTankVisuals(scene, playerTank) {
@@ -49,6 +56,7 @@ export function handlePlayerHit(scene, playerTank = scene.player) {
       scene.isGameOver = true;
       syncSceneStatusToMatchState(scene);
       scene.showMessage("Sin vidas\nGame Over");
+      showGameOverBanner(scene, scene.destroyedEnemiesCount || 0, 1300);
       scene.saveSettings();
       scene.saveCombatStats();
       scene.time.delayedCall(1300, () => scene.scene.restart());
@@ -90,7 +98,10 @@ export function tryRespawnPlayer(scene, slot = 1) {
     return;
   }
 
-  scene.createPlayerTankForSlot(slot);
+  const tank = scene.createPlayerTankForSlot(slot);
+  if (scene.currentGameMode === "survival" && tank) {
+    applyShield(scene, tank, SPAWN_SHIELD_DURATION_MS, { flickerOnExpire: false });
+  }
   scene.updateLivesText();
   scene.updateCoopText();
   scene.showMessage(slot === 2 ? "P2 reapareció" : "P1 reapareció");

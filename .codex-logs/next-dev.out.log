@@ -1,0 +1,12 @@
+
+> tank-game@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.1 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.120.23:3000
+✓ Ready in 375ms
+Creating turbopack project { dir: 'C:\\devs\\tank-game', testMode: true }
+
+ GET / 200 in 238ms (next.js: 125ms, application-code: 113ms)
+ GET / 200 in 33ms (next.js: 2ms, application-code: 31ms)

@@ -1,10 +1,12 @@
 export const ONLINE_MESSAGE = {
   JOIN: "join",
+  LEAVE: "leave",
   WELCOME: "welcome",
   INPUT: "input",
   SNAPSHOT: "snapshot",
   ERROR: "error",
   PLAYER_FIRED: "player_fired",
+  PICKUP_POWER_UP: "pickup_power_up",
 };
 
 export function normalizeWsUrl(rawUrl) {

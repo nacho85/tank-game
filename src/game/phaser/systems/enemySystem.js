@@ -377,6 +377,16 @@ export function fillEnemyWaveSlots(scene) {
     if (!enemy) break;
     scene.enemies.push(enemy);
     scene.spawnedEnemiesCount += 1;
+
+    // Survival: tanques 4, 11, 18, 25… (cada 7 desde el 4) son blindados
+    if (isSurvival && scene.spawnedEnemiesCount >= 4 && (scene.spawnedEnemiesCount - 4) % 7 === 0) {
+      scene.makeEnemyArmored(enemy);
+    }
+
+    // Si hay clock activo, el tanque recién aparecido también queda congelado
+    if (scene.activePowerEffects?.clock && !enemy.isBoss) {
+      enemy.frozen = true;
+    }
   }
 
   scene.updateWaveText();
@@ -539,6 +549,10 @@ export function getEnemyTraversalCost(scene, col, row) {
     const breakBias = scene.getEnemyBehaviorTuning?.().breakBricks ?? 0.58;
     return Phaser.Math.Linear(5.6, 2.2, breakBias);
   }
+  if (obstacle === TILE.ROAD) {
+    const survivalBridgeBias = scene.currentGameMode === "survival" ? 0.44 : 0.72;
+    return survivalBridgeBias;
+  }
   return 1;
 }
 
@@ -600,14 +614,13 @@ export function clearEnemyNavigationStuckState(scene, enemy) {
 }
 
 export function createOrRefreshDebugOverlay(scene) {
-  if (!scene.debugGraphics) {
-    scene.debugGraphics = scene.add.graphics().setDepth(890);
-    scene.entityLayer.add(scene.debugGraphics);
-  }
-  return scene.debugGraphics;
+  return null;
 }
 
 export function refreshDebugOverlay(scene) {
+  scene.debugEnemyStateTexts?.forEach((text) => text.destroy());
+  scene.debugEnemyStateTexts = [];
+  return;
   const graphics = scene.createOrRefreshDebugOverlay();
   graphics.clear();
   const showSpawnReserve = Math.round(scene.settings?.debugSpawnReserveOverlay || 0) === 1;
@@ -757,6 +770,15 @@ export function getEnemyBehaviorTuning(scene) {
   };
 }
 
+export function getEnemyShotAngle(scene, enemy, targetAngle = enemy?.turretAngleRad ?? 0) {
+  const aimErrorDeg = clamp(Number(scene.settings?.enemyAimErrorDeg ?? 0), 0, 25);
+  if (aimErrorDeg <= 0) return targetAngle;
+
+  return Phaser.Math.Angle.Wrap(
+    targetAngle + Phaser.Math.FloatBetween(-Phaser.Math.DegToRad(aimErrorDeg), Phaser.Math.DegToRad(aimErrorDeg))
+  );
+}
+
 export function ensureEnemyRouteStats(scene, enemy) {
   if (!enemy.routeStats) {
     enemy.routeStats = { stuckEvents: 0, repaths: 0, recoveries: 0, noProgressMs: 0, state: "avance", blockedBy: "ninguno", goalType: enemy?.currentObjective?.goalType || "base", routeCommitUntil: 0, lastProgressSample: 0 };
@@ -792,10 +814,40 @@ export function getEnemyBlockedCause(scene, enemy) {
   return obstacle ? "terreno" : "desconocido";
 }
 
+export function getEnemyRushTarget(scene, enemy, tuning = scene.getEnemyBehaviorTuning()) {
+  const enemyNoticeRadius = Math.max(TILE_SIZE * 7, tuning.playerNoticeRadius || 0);
+  const nearestFriendly = scene.getNearestFriendlyTank(enemy.x, enemy.y);
+  const nearestFriendlyDist = nearestFriendly
+    ? vectorLength(nearestFriendly.x - enemy.x, nearestFriendly.y - enemy.y)
+    : Number.POSITIVE_INFINITY;
+
+  if (nearestFriendly && !nearestFriendly.isDestroyed && nearestFriendlyDist < enemyNoticeRadius) {
+    const cell = scene.worldToCell(nearestFriendly.x, nearestFriendly.y);
+    return {
+      goalType: "player",
+      x: nearestFriendly.x,
+      y: nearestFriendly.y,
+      col: cell.col,
+      row: cell.row,
+      playerSlot: nearestFriendly.playerSlot || (nearestFriendly.type === "player2" ? 2 : 1),
+    };
+  }
+
+  return scene.getPrimaryBaseObjective();
+}
+
+export function getEnemyRushMode(scene) {
+  return clamp(Math.round(Number(scene.settings?.enemyRushMode ?? 0)), 0, 3);
+}
+
 export function chooseEnemyObjective(scene, enemy, tuning, forceNew = false) {
   const stats = scene.ensureEnemyRouteStats(enemy);
   const now = scene.time.now;
+  const isSurvival = scene.currentGameMode === "survival";
+  const rushMode = scene.getEnemyRushMode?.() ?? getEnemyRushMode(scene);
+  const isSurvivalRush = isSurvival && rushMode >= 2;
   if (!forceNew && enemy.currentObjective && now < (stats.routeCommitUntil || 0)) {
+    if (isSurvivalRush && enemy.currentObjective.goalType !== "player") return enemy.currentObjective;
     if (enemy.currentObjective.goalType !== "player") return enemy.currentObjective;
     const trackedPlayer = scene.getFriendlyTanks().find((tank) => tank && !tank.isDestroyed && tank.playerSlot === enemy.currentObjective.playerSlot);
     if (trackedPlayer) {
@@ -811,9 +863,33 @@ export function chooseEnemyObjective(scene, enemy, tuning, forceNew = false) {
   const distToPlayer = nearestFriendly ? vectorLength(nearestFriendly.x - enemy.x, nearestFriendly.y - enemy.y) : Number.POSITIVE_INFINITY;
   let nextObjective = scene.getPrimaryBaseObjective();
   let goalType = nextObjective.goalType || "base";
-  const shouldHuntPlayer = nearestFriendly && !nearestFriendly.isDestroyed && (distToPlayer <= tuning.playerNoticeRadius && (tuning.playerAggro >= tuning.basePressure * 0.82 || enemy.lastDamagedByPlayerUntil > now || goalType === "player"));
+  if (isSurvivalRush && !forceNew) {
+    nextObjective = scene.getEnemyRushTarget(enemy, tuning);
+    goalType = nextObjective.goalType || "base";
+    stats.goalType = goalType;
+    stats.routeCommitUntil = now + tuning.routeCommitMs * 1.35;
+    enemy.currentObjective = nextObjective;
+    return nextObjective;
+  }
+  const shouldHuntPlayer = nearestFriendly && !nearestFriendly.isDestroyed && (
+    distToPlayer <= (isSurvivalRush ? tuning.playerNoticeRadius * 0.92 : isSurvival ? tuning.playerNoticeRadius * 0.82 : tuning.playerNoticeRadius) &&
+    (
+      (isSurvivalRush
+        ? distToPlayer <= TILE_SIZE * 5.2
+        : isSurvival
+        ? tuning.playerAggro >= tuning.basePressure * 1.18 && distToPlayer <= TILE_SIZE * 4.25
+        : tuning.playerAggro >= tuning.basePressure * 0.82) ||
+      enemy.lastDamagedByPlayerUntil > now ||
+      goalType === "player"
+    )
+  );
   const brickObjectives = scene.getCriticalBrickObjectives(nearestFriendly);
-  const shouldBreakCriticalBrick = brickObjectives.length > 0 && (tuning.breakBricks > 0.38 || enemy.blockedTimer > 140 || stats.noProgressMs > 420 || Math.random() < (0.08 + tuning.breakBricks * 0.34));
+  const shouldBreakCriticalBrick = brickObjectives.length > 0 && (
+    tuning.breakBricks > (isSurvival ? 0.28 : 0.38) ||
+    enemy.blockedTimer > 140 ||
+    stats.noProgressMs > (isSurvival ? 260 : 420) ||
+    Math.random() < (isSurvival ? 0.2 + tuning.breakBricks * 0.5 : 0.08 + tuning.breakBricks * 0.34)
+  );
   if (shouldHuntPlayer) {
     const cell = scene.worldToCell(nearestFriendly.x, nearestFriendly.y);
     const playerPressureBrick = brickObjectives.find((candidate) => candidate.brickReason?.includes("p"));
@@ -827,7 +903,7 @@ export function chooseEnemyObjective(scene, enemy, tuning, forceNew = false) {
     brickObjectives.sort((a, b) => (vectorLength(a.x - enemy.x, a.y - enemy.y) / Math.max(0.1, a.weight || 1)) - (vectorLength(b.x - enemy.x, b.y - enemy.y) / Math.max(0.1, b.weight || 1)));
     nextObjective = brickObjectives[0] || scene.getEnemyApproachObjective(nearestFriendly);
     goalType = nextObjective.goalType || "base";
-  } else if (tuning.flankBias > 0.55 && Math.random() < 0.32 + tuning.flankBias * 0.24) {
+  } else if (!isSurvival && tuning.flankBias > 0.55 && Math.random() < 0.32 + tuning.flankBias * 0.24) {
     const flankTarget = scene.pickWaypointInZone(enemy.patrolZone);
     if (flankTarget) { nextObjective = { ...flankTarget, goalType: "flank" }; goalType = "flank"; }
   }
@@ -881,8 +957,8 @@ export function getEnemyNavigationFieldForObjective(scene, objective) {
 
 export function updateEnemyRouteSelfEvaluation(scene, enemy, distanceToObjective, delta, tuning) {
   const stats = scene.ensureEnemyRouteStats(enemy);
-  const evaluate = Math.round(scene.settings?.autoEvaluateEnemyRoutes || 0) === 1;
-  const autocorrect = Math.round(scene.settings?.autoCorrectEnemyRoutes || 0) === 1;
+  const evaluate = true;
+  const autocorrect = true;
   if (enemy.lastObjectiveDistance == null || distanceToObjective + 8 < enemy.lastObjectiveDistance) {
     enemy.lastObjectiveDistance = distanceToObjective;
     enemy.lastMeaningfulProgressAt = scene.time.now;
@@ -922,6 +998,7 @@ export function updateEnemyRouteSelfEvaluation(scene, enemy, distanceToObjective
 }
 
 export function ensureEnemyDebugHudText(scene) {
+  return null;
   if (!scene.add || !scene.entityLayer || !scene.sys || scene.sys.isDestroyed) return null;
   const needsNewText = !scene.debugHudText || !scene.debugHudText.scene || !scene.debugHudText.active || !scene.debugHudText.canvas;
   if (needsNewText) {
@@ -933,6 +1010,11 @@ export function ensureEnemyDebugHudText(scene) {
 }
 
 export function updateEnemyDebugHud(scene) {
+  if (scene.debugHudText) {
+    try { scene.debugHudText.destroy(); } catch (error) {}
+    scene.debugHudText = null;
+  }
+  return;
   const showState = Math.round(scene.settings?.debugEnemyStateText || 0) === 1;
   const autoTest = Math.round(scene.settings?.autoTestEnemyRoutes || 0) === 1;
   const hudText = scene.ensureEnemyDebugHudText();
@@ -952,6 +1034,9 @@ export function updateEnemyDebugHud(scene) {
 
 export function getEnemySteeringPlan(scene, enemy) {
   const tuning = scene.getEnemyBehaviorTuning();
+  const isSurvival = scene.currentGameMode === "survival";
+  const rushMode = scene.getEnemyRushMode?.() ?? getEnemyRushMode(scene);
+  const isSurvivalRush = isSurvival && rushMode >= 2;
   const objective = scene.chooseEnemyObjective(enemy, tuning, false);
   const fallback = enemy.patrolTarget || scene.pickWaypointInZone(enemy.patrolZone);
   const basePressure = tuning.basePressure;
@@ -971,9 +1056,28 @@ export function getEnemySteeringPlan(scene, enemy) {
     const noticeRadius = Math.max(TILE_SIZE * 4.5, tuning.playerNoticeRadius);
     pursuitWeight = clamp(1 - dist / noticeRadius, 0, 1) * (0.45 + tuning.playerAggro * 0.65);
   }
+  if (isSurvivalRush) {
+    const rushTarget = scene.getEnemyRushTarget(enemy, tuning);
+    const rushNav = scene.getEnemyNavigationVector(enemy, rushTarget);
+    const rushDirect = normalizeVector(rushTarget.x - enemy.x, rushTarget.y - enemy.y);
+    const rushSteering = normalizeVector(
+      rushNav.x * 1.95 + rushDirect.x * 1.1,
+      rushNav.y * 1.95 + rushDirect.y * 1.1
+    );
+    const candidateObjectives = [rushTarget];
+    const brickCandidates = scene.getCriticalBrickObjectives(scene.getNearestFriendlyTank(enemy.x, enemy.y)).slice(0, 3);
+    brickCandidates.forEach((candidate) => candidateObjectives.push(candidate));
+    enemy.debugPlan = {
+      objective: { x: rushTarget.x, y: rushTarget.y, goalType: rushTarget.goalType || "base", col: rushTarget.col, row: rushTarget.row },
+      fallback: null,
+      candidateObjectives: candidateObjectives.map((candidate) => ({ x: candidate.x, y: candidate.y, goalType: candidate.goalType || "extra", col: candidate.col, row: candidate.row })),
+      vectors: { toObjective: { ...rushNav }, orbitDir: { x: 0, y: 0 }, fallbackDir: { x: 0, y: 0 }, pursuitDir: { ...rushDirect }, jitterDir: { x: 0, y: 0 } },
+    };
+    return { objective: rushTarget, steering: rushSteering, goalType: rushTarget.goalType || "base", fallback: rushTarget, playerWeight: pursuitWeight };
+  }
   const steering = normalizeVector(
-    toObjective.x * (0.95 + basePressure * 0.95) + orbitDir.x * (0.12 + flankBias * 0.82) + fallbackDir.x * (0.08 + wander * 0.45) + pursuitDir.x * pursuitWeight + jitterDir.x * (wander * 0.32),
-    toObjective.y * (0.95 + basePressure * 0.95) + orbitDir.y * (0.12 + flankBias * 0.82) + fallbackDir.y * (0.08 + wander * 0.45) + pursuitDir.y * pursuitWeight + jitterDir.y * (wander * 0.32)
+    toObjective.x * (isSurvivalRush ? 1.95 + basePressure * 1.2 : isSurvival ? 1.5 + basePressure * 1.1 : 0.95 + basePressure * 0.95) + orbitDir.x * (isSurvivalRush ? 0.015 + flankBias * 0.08 : isSurvival ? 0.04 + flankBias * 0.22 : 0.12 + flankBias * 0.82) + fallbackDir.x * (isSurvivalRush ? 0.01 + wander * 0.03 : isSurvival ? 0.03 + wander * 0.12 : 0.08 + wander * 0.45) + pursuitDir.x * (isSurvivalRush ? pursuitWeight * 0.98 : isSurvival ? pursuitWeight * 0.72 : pursuitWeight) + jitterDir.x * (isSurvivalRush ? wander * 0.015 : isSurvival ? wander * 0.08 : wander * 0.32),
+    toObjective.y * (isSurvivalRush ? 1.95 + basePressure * 1.2 : isSurvival ? 1.5 + basePressure * 1.1 : 0.95 + basePressure * 0.95) + orbitDir.y * (isSurvivalRush ? 0.015 + flankBias * 0.08 : isSurvival ? 0.04 + flankBias * 0.22 : 0.12 + flankBias * 0.82) + fallbackDir.y * (isSurvivalRush ? 0.01 + wander * 0.03 : isSurvival ? 0.03 + wander * 0.12 : 0.08 + wander * 0.45) + pursuitDir.y * (isSurvivalRush ? pursuitWeight * 0.98 : isSurvival ? pursuitWeight * 0.72 : pursuitWeight) + jitterDir.y * (isSurvivalRush ? wander * 0.015 : isSurvival ? wander * 0.08 : wander * 0.32)
   );
   const candidateObjectives = [objective, fallback].filter(Boolean);
   const brickCandidates = scene.getCriticalBrickObjectives(scene.getNearestFriendlyTank(enemy.x, enemy.y)).slice(0, 3);
@@ -1003,17 +1107,163 @@ export function getEnemyObjectiveShot(scene, enemy) {
 }
 
 export function getEnemyUnstuckDirection(scene, enemy, preferredSteering, localRandom = Math.random) {
+  const tuning = scene.getEnemyBehaviorTuning?.() || {};
+  const rushMode = scene.getEnemyRushMode?.() ?? getEnemyRushMode(scene);
+  const isSurvivalRush = scene.currentGameMode === "survival" && rushMode >= 2;
   const preferredAngle = Math.atan2(preferredSteering.y, preferredSteering.x);
-  const candidateAngles = [preferredAngle + Math.PI / 2, preferredAngle - Math.PI / 2, preferredAngle + Math.PI, preferredAngle + Math.PI / 4, preferredAngle - Math.PI / 4, preferredAngle + (localRandom() < 0.5 ? 0.72 : -0.72) * Math.PI];
+  const candidateAngles = isSurvivalRush
+    ? [preferredAngle + Math.PI / 4, preferredAngle - Math.PI / 4, preferredAngle + Math.PI / 2, preferredAngle - Math.PI / 2]
+    : [preferredAngle + Math.PI / 2, preferredAngle - Math.PI / 2, preferredAngle + Math.PI, preferredAngle + Math.PI / 4, preferredAngle - Math.PI / 4, preferredAngle + (localRandom() < 0.5 ? 0.72 : -0.72) * Math.PI];
   for (const angle of candidateAngles) {
     const dir = { x: Math.cos(angle), y: Math.sin(angle) };
     const probeDistance = Math.max(TILE_SIZE * 1.35, TANK_COLLISION_SIZE * 0.9);
     if (scene.canOccupyWorldPosition(enemy.x + dir.x * probeDistance, enemy.y + dir.y * probeDistance, enemy)) return { dir, angle };
   }
+  if (isSurvivalRush) {
+    return { dir: normalizeVector(preferredSteering.x, preferredSteering.y), angle: preferredAngle };
+  }
   return { dir: { x: -preferredSteering.x, y: -preferredSteering.y }, angle: Phaser.Math.Angle.Wrap(preferredAngle + Math.PI) };
 }
 
+export function updateEnemyOnlineRushStyle(scene, enemy, delta, tuning) {
+  const now = scene.time.now;
+  const rushMode = scene.getEnemyRushMode?.() ?? getEnemyRushMode(scene);
+  const target = scene.getEnemyRushTarget(enemy, tuning);
+  const dx = target.x - enemy.x;
+  const dy = target.y - enemy.y;
+  const len = Math.max(1, vectorLength(dx, dy));
+  const targetDir = { x: dx / len, y: dy / len };
+  const moveAmount = (enemy.moveSpeed * delta) / 1000;
+  const probeDistance = TILE_SIZE * 1.1;
+
+  enemy.rushLastSampleAt = enemy.rushLastSampleAt || now;
+  if (enemy.rushLastX == null) {
+    enemy.rushLastX = enemy.x;
+    enemy.rushLastY = enemy.y;
+    enemy.rushLastSampleAt = now;
+  }
+
+  if (now - enemy.rushLastSampleAt > 350) {
+    const movedDistance = vectorLength(enemy.x - enemy.rushLastX, enemy.y - enemy.rushLastY);
+    enemy.rushStuckTimer = movedDistance < 6
+      ? (enemy.rushStuckTimer || 0) + (now - enemy.rushLastSampleAt)
+      : 0;
+    enemy.rushLastX = enemy.x;
+    enemy.rushLastY = enemy.y;
+    enemy.rushLastSampleAt = now;
+  }
+
+  let desiredDir = null;
+
+  if ((enemy.rushUnstuckUntil || 0) > now && enemy.rushUnstuckDir) {
+    desiredDir = enemy.rushUnstuckDir;
+  } else {
+    if ((enemy.rushStuckTimer || 0) > 500) {
+      enemy.rushStuckTimer = 0;
+      const perp1 = { x: -targetDir.y, y: targetDir.x };
+      const perp2 = { x: targetDir.y, y: -targetDir.x };
+      const diag1 = normalizeVector(targetDir.x * 0.5 - targetDir.y * 0.87, targetDir.y * 0.5 + targetDir.x * 0.87);
+      const diag2 = normalizeVector(targetDir.x * 0.5 + targetDir.y * 0.87, targetDir.y * 0.5 - targetDir.x * 0.87);
+      for (const dir of [perp1, perp2, diag1, diag2]) {
+        if (scene.canOccupyWorldPosition(enemy.x + dir.x * probeDistance, enemy.y + dir.y * probeDistance, enemy)) {
+          enemy.rushUnstuckDir = normalizeVector(dir.x, dir.y);
+          enemy.rushUnstuckUntil = now + 500 + Math.random() * 400;
+          enemy.rushLastDirChangeAt = now;
+          desiredDir = enemy.rushUnstuckDir;
+          break;
+        }
+      }
+    }
+
+    if (!desiredDir) {
+      const needsDirRefresh = !enemy.rushDir || now - (enemy.rushLastDirChangeAt || 0) > 1000;
+      if (needsDirRefresh) {
+        const spread = rushMode >= 3 ? 0.22 : 0.34;
+        let ndx = targetDir.x + (Math.random() - 0.5) * spread;
+        let ndy = targetDir.y + (Math.random() - 0.5) * spread;
+        const normalizedDir = normalizeVector(ndx, ndy);
+        ndx = normalizedDir.x;
+        ndy = normalizedDir.y;
+
+        if (!scene.canOccupyWorldPosition(enemy.x + ndx * probeDistance, enemy.y + ndy * probeDistance, enemy)) {
+          const perp1 = { x: -ndy, y: ndx };
+          const perp2 = { x: ndy, y: -ndx };
+          if (scene.canOccupyWorldPosition(enemy.x + perp1.x * probeDistance, enemy.y + perp1.y * probeDistance, enemy)) {
+            ndx = perp1.x;
+            ndy = perp1.y;
+          } else if (scene.canOccupyWorldPosition(enemy.x + perp2.x * probeDistance, enemy.y + perp2.y * probeDistance, enemy)) {
+            ndx = perp2.x;
+            ndy = perp2.y;
+          } else {
+            const navDir = scene.getEnemyNavigationVector(enemy, target);
+            ndx = navDir.x;
+            ndy = navDir.y;
+          }
+        }
+
+        enemy.rushDir = normalizeVector(ndx, ndy);
+        enemy.rushLastDirChangeAt = now;
+      }
+      desiredDir = enemy.rushDir || targetDir;
+    }
+  }
+
+  desiredDir = normalizeVector(desiredDir.x, desiredDir.y);
+  enemy.currentObjective = target;
+  enemy.currentGoalType = target.goalType || "base";
+  enemy.debugPlan = {
+    objective: { x: target.x, y: target.y, goalType: target.goalType || "base", col: target.col, row: target.row },
+    fallback: null,
+    candidateObjectives: [target],
+    vectors: { toObjective: { ...desiredDir }, orbitDir: { x: 0, y: 0 }, fallbackDir: { x: 0, y: 0 }, pursuitDir: { ...targetDir }, jitterDir: { x: 0, y: 0 } },
+  };
+
+  const targetMoveAngle = Math.atan2(desiredDir.y, desiredDir.x);
+  const currentMoveAngle = enemy.steeringAngleRad ?? Phaser.Math.DegToRad(enemy.moveAngleDeg || 0);
+  const turnRateRad = Phaser.Math.DegToRad(tuning.turnRateNormalDeg) * (delta / 1000);
+  const angleDelta = wrapRadDiff(targetMoveAngle, currentMoveAngle);
+  enemy.steeringAngleRad = currentMoveAngle + clamp(angleDelta, -turnRateRad, turnRateRad);
+
+  let moved = scene.tryMoveTank(enemy, Math.cos(enemy.steeringAngleRad) * moveAmount, Math.sin(enemy.steeringAngleRad) * moveAmount);
+  if (!moved && enemy.shotCooldown <= 0) {
+    const aheadX = enemy.x + Math.cos(enemy.steeringAngleRad) * TILE_SIZE * 1.1;
+    const aheadY = enemy.y + Math.sin(enemy.steeringAngleRad) * TILE_SIZE * 1.1;
+    const aheadCell = scene.worldToCell(aheadX, aheadY);
+    const aheadObstacle = scene.level?.obstacles?.[aheadCell.row]?.[aheadCell.col];
+    if (aheadObstacle === TILE.BRICK) {
+      enemy.turretAngleRad = enemy.steeringAngleRad;
+      scene.noteEnemyRouteMetric("brickShots");
+      scene.fireBullet(enemy);
+    }
+  }
+  if (moved) {
+    enemy.moveAngleDeg = angleDegFromVector(Math.cos(enemy.steeringAngleRad), Math.sin(enemy.steeringAngleRad));
+    enemy.blockedTimer = 0;
+    enemy.routeRepathLatch = false;
+    if (enemy.routeStats) enemy.routeStats.state = "avance";
+  } else {
+    enemy.blockedTimer += delta;
+  }
+
+  const aimTarget = target.goalType === "player" ? target : scene.getNearestFriendlyTank(enemy.x, enemy.y);
+  const aimDx = aimTarget ? aimTarget.x - enemy.x : dx;
+  const aimDy = aimTarget ? aimTarget.y - enemy.y : dy;
+  const desiredTurretAngle = Math.atan2(aimDy, aimDx);
+  const turretTurnStep = Phaser.Math.DegToRad(tuning.turretTurnDeg) * (delta / 1000);
+  const turretDelta = wrapRadDiff(desiredTurretAngle, enemy.turretAngleRad);
+  enemy.turretAngleRad = Phaser.Math.Angle.Wrap(enemy.turretAngleRad + clamp(turretDelta, -turretTurnStep, turretTurnStep));
+  scene.updateTankVisuals(enemy);
+
+  const linedUp = Math.abs(Phaser.Math.Angle.Wrap(enemy.turretAngleRad - desiredTurretAngle)) < (rushMode >= 3 ? 0.22 : 0.3);
+  if (enemy.shotCooldown <= 0 && linedUp) {
+    scene.fireBullet(enemy, scene.getEnemyShotAngle(enemy, enemy.turretAngleRad));
+  }
+}
+
 export function updateEnemy(scene, enemy, delta) {
+  // Congelado por el poder Clock: no actualizar nada
+  if (enemy.frozen) return;
+
   enemy.shotCooldown = Math.max(0, enemy.shotCooldown - delta);
   enemy.patrolRetargetTimer -= delta;
   enemy.objectiveRetargetTimer -= delta;
@@ -1025,6 +1275,12 @@ export function updateEnemy(scene, enemy, delta) {
     enemy.patrolRetargetTimer = Phaser.Math.Between(900, 1900);
   }
   const tuning = scene.getEnemyBehaviorTuning();
+  const rushMode = scene.getEnemyRushMode?.() ?? getEnemyRushMode(scene);
+  const isSurvivalRush = scene.currentGameMode === "survival" && rushMode >= 2;
+  if (isSurvivalRush) {
+    updateEnemyOnlineRushStyle(scene, enemy, delta, tuning);
+    return;
+  }
   if (enemy.objectiveRetargetTimer <= 0 || !enemy.currentObjective) {
     enemy.orbitSign *= Math.random() < 0.35 ? -1 : 1;
     enemy.currentObjective = scene.chooseEnemyObjective(enemy, tuning, true);
@@ -1058,7 +1314,10 @@ export function updateEnemy(scene, enemy, delta) {
     stats.blockedBy = scene.getEnemyBlockedCause(enemy);
     if (["tanque", "jugador"].includes(stats.blockedBy)) scene.noteEnemyRouteMetric("blockedByTank");
     else scene.noteEnemyRouteMetric("blockedByTerrain");
-    const sidestepOptions = [{ x: -steering.y * enemy.orbitSign, y: steering.x * enemy.orbitSign }, { x: steering.y * enemy.orbitSign, y: -steering.x * enemy.orbitSign }, { x: -steering.x, y: -steering.y }].map((dir) => normalizeVector(dir.x, dir.y));
+    const sidestepOptions = (isSurvivalRush
+      ? [{ x: -steering.y * enemy.orbitSign, y: steering.x * enemy.orbitSign }, { x: steering.y * enemy.orbitSign, y: -steering.x * enemy.orbitSign }]
+      : [{ x: -steering.y * enemy.orbitSign, y: steering.x * enemy.orbitSign }, { x: steering.y * enemy.orbitSign, y: -steering.x * enemy.orbitSign }, { x: -steering.x, y: -steering.y }])
+      .map((dir) => normalizeVector(dir.x, dir.y));
     for (const candidate of sidestepOptions) {
       moved = scene.tryMoveTank(enemy, candidate.x * moveAmount, candidate.y * moveAmount);
       if (moved) { steering = candidate; enemy.steeringAngleRad = Math.atan2(candidate.y, candidate.x); enemy.unstuckTimer = 260; enemy.unstuckDirection = candidate; break; }
@@ -1077,10 +1336,13 @@ export function updateEnemy(scene, enemy, delta) {
   if (moved) {
     enemy.blockedTimer = 0; enemy.routeRepathLatch = false; if (enemy.routeStats) enemy.routeStats.state = "avance"; enemy.moveAngleDeg = angleDegFromVector(steering.x, steering.y);
   }
-  const aimTarget = scene.getNearestFriendlyTank(enemy.x, enemy.y);
+  const rushTarget = isSurvivalRush ? scene.getEnemyRushTarget(enemy, tuning) : null;
+  const aimTarget = rushTarget?.goalType === "player"
+    ? scene.getNearestFriendlyTank(enemy.x, enemy.y)
+    : scene.getNearestFriendlyTank(enemy.x, enemy.y);
   const dxToPlayer = aimTarget ? aimTarget.x - enemy.x : 0; const dyToPlayer = aimTarget ? aimTarget.y - enemy.y : 0; const distToPlayer = aimTarget ? vectorLength(dxToPlayer, dyToPlayer) : Infinity; const playerAimBias = scene.getEnemyBehaviorTuning().aimPlayerBias; const playerVisible = !!aimTarget && distToPlayer < TILE_SIZE * 5.4;
   const objectiveShot = scene.getEnemyObjectiveShot(enemy);
-  const shouldTrackPlayer = playerVisible && Math.random() < (0.28 + playerAimBias * 0.72);
+  const shouldTrackPlayer = playerVisible && (isSurvivalRush ? distToPlayer < TILE_SIZE * 7 : Math.random() < (0.28 + playerAimBias * 0.72));
   let desiredTurretAngle = null;
   if (shouldTrackPlayer) desiredTurretAngle = Math.atan2(dyToPlayer, dxToPlayer);
   else if (objectiveShot) desiredTurretAngle = objectiveShot.angle;
@@ -1092,5 +1354,7 @@ export function updateEnemy(scene, enemy, delta) {
   const aimedAtPlayer = shouldTrackPlayer && Math.abs(Phaser.Math.Angle.Wrap(enemy.turretAngleRad - Math.atan2(dyToPlayer, dxToPlayer))) < 0.3;
   const aimedAtObjective = objectiveShot && Math.abs(Phaser.Math.Angle.Wrap(enemy.turretAngleRad - objectiveShot.angle)) < 0.2;
   const opportunisticSuppression = Math.random() > 0.9975;
-  if (enemy.shotCooldown <= 0 && (aimedAtPlayer || aimedAtObjective || opportunisticSuppression)) scene.fireBullet(enemy);
+  if (enemy.shotCooldown <= 0 && (aimedAtPlayer || aimedAtObjective || opportunisticSuppression)) {
+    scene.fireBullet(enemy, scene.getEnemyShotAngle(enemy, enemy.turretAngleRad));
+  }
 }

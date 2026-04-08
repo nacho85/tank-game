@@ -3,15 +3,11 @@ import {
   BOARD_WIDTH,
   GRID_WIDTH,
   HUD_GUTTER,
-  HUD_SIDEBAR_WIDTH,
 } from "../../shared/constants";
 import { createMatchState } from "./matchState";
 
 export function createSceneState(scene, width, height) {
-  const boardOriginX = Math.max(
-    HUD_SIDEBAR_WIDTH + HUD_GUTTER,
-    width - BOARD_WIDTH - HUD_GUTTER
-  );
+  const boardOriginX = Math.floor((width - BOARD_WIDTH) / 2);
   const boardOriginY = Math.floor((height - BOARD_HEIGHT) / 2);
 
   scene.boardOriginX = boardOriginX;
@@ -29,6 +25,8 @@ export function createSceneState(scene, width, height) {
   scene.playerTwoJoined = false;
   scene.playerRespawnEvents = { 1: null, 2: null };
   scene.bullets = [];
+  scene.powerUps = [];
+  scene.activePowerEffects = {};
   scene.wasPlayerFireDown = false;
   scene.wasPlayerTwoFireDown = false;
   scene.wasPadStartPressed = {};
