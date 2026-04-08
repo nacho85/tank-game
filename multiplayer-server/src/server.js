@@ -8,6 +8,7 @@ import { worldToGridCol, worldToGridRow, inBounds, isDestructibleTile, isBlockin
 import { createOnline2v2Level, getOnlineBaseWorld, getOnlineSpawnWorld, ONLINE_BASE_DEFS, ONLINE_ROLE_SPAWNS } from "./onlineMap.js";
 
 const PORT = Number(process.env.PORT || 3001);
+const HOST = process.env.HOST || "0.0.0.0";
 const TICK_RATE = 40;
 const TICK_MS = Math.round(1000 / TICK_RATE);
 const BOARD_WIDTH = (SURVIVAL_GRID_WIDTH + 2) * TILE_SIZE;
@@ -288,7 +289,7 @@ function createRoundState(matchConfig = createDefaultMatchConfig()) {
   };
 }
 
-const wss = new WebSocketServer({ port: PORT });
+const wss = new WebSocketServer({ host: HOST, port: PORT });
 const clients = new Map();
 const ALL_POWER_TYPES_ONLINE = ["shovel", "shield", "tank", "star", "clock", "missiles"];
 
@@ -2409,6 +2410,6 @@ setInterval(() => {
   });
 }, LOBBY_SWEEP_MS);
 
-console.log(`[multiplayer] Servidor escuchando en ws://localhost:${PORT}`);
+console.log(`[multiplayer] Servidor escuchando en ws://${HOST}:${PORT}`);
 console.log(`[multiplayer] La siguiente linea es solo diagnostico de configuracion online, no un error.`);
 console.log(`Rondas: ${TOTAL_ROUNDS} | Cambio de lado: ronda ${SIDE_SWITCH_AFTER_ROUND + 1} | HP águila: ${BASE_HP_PER_ROUND}`);
