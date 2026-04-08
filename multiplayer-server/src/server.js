@@ -1166,6 +1166,14 @@ function broadcastLobbyList() {
       .filter((room) => room.freeSlots > 0)
       .sort((a, b) => a.createdAt - b.createdAt),
   };
+  console.log("[lobby] room_list", payload.rooms.map((room) => ({
+    id: room.id,
+    roomName: room.roomName,
+    hostName: room.hostName,
+    freeSlots: room.freeSlots,
+    playerCount: room.playerCount,
+    maxPlayers: room.maxPlayers,
+  })));
   clients.forEach((client) => {
     if (client.ws.readyState === 1) {
       client.ws.send(JSON.stringify({ type: MESSAGE.ROOM_LIST, payload }));
@@ -2328,6 +2336,11 @@ wss.on("connection", (ws) => {
           updateLobbyRoom(clientId, message.payload || {});
           break;
         case MESSAGE.LIST_ROOMS:
+          console.log("[lobby] list_rooms request", {
+            clientId,
+            roomId: message.payload?.roomId || null,
+            currentLobbyRoomId: client?.currentLobbyRoomId || null,
+          });
           if (message.payload?.roomId) requestRoomDetail(clientId, message.payload);
           else sendToClient(clientId, MESSAGE.ROOM_LIST, {
             rooms: Array.from(lobbyRooms.values()).map(lobbyRoomToSummary).filter((room) => room.freeSlots > 0),
