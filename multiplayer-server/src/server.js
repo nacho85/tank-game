@@ -541,9 +541,9 @@ function toProjectileColor(color) {
 
   if (v < 0.18) return 0x050505;
   if (v < 0.32 && s < 0.28) return 0x101010;
-  if (s < 0.12 && v > 0.82) return 0xd9d9d9;
+  if (s < 0.12 && v > 0.82) return 0xdedede;
   if (s < 0.22) {
-    const gray = Math.max(0x22, Math.min(0xc8, Math.round(v * 255)));
+    const gray = Math.max(0x1a, Math.min(0xd8, Math.round(v * 255)));
     return rgbToColor(gray, gray, gray);
   }
 

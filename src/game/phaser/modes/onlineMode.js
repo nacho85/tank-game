@@ -304,22 +304,22 @@ function destroyOnlineMissileVisual(missile) {
 
 function createRemoteBulletVisual(scene, remoteBullet) {
   const bulletTint = Number(remoteBullet.tint || 0xfff3a8);
-  const shellTint = darkenTint(bulletTint, 0.22);
-  const outerGasTint = darkenTint(bulletTint, 0.12);
-  const innerGasTint = brightenTint(bulletTint, 0.03);
-  const coreTint = brightenTint(bulletTint, 0.08);
+  const shellTint = darkenTint(bulletTint, 0.2);
+  const outerGasTint = darkenTint(bulletTint, 0.1);
+  const innerGasTint = brightenTint(bulletTint, 0.05);
+  const coreTint = brightenTint(bulletTint, 0.1);
   const width = remoteBullet.width || 11;
   const length = remoteBullet.length || 24;
   const x = scene.boardOriginX + remoteBullet.x;
   const y = scene.boardOriginY + remoteBullet.y;
   const glow = scene.add.graphics().setDepth(178);
   const body = scene.add.graphics().setDepth(179);
-  const core = scene.add.graphics().setDepth(180);
-  drawBulletShape(glow, Math.max(6, width * 0.88), Math.max(12, length * 0.8), shellTint, 1);
-  drawBulletShape(body, Math.max(6, width * 0.9), Math.max(13, length * 0.84), shellTint, 1);
-  drawBulletShape(body, Math.max(5, width * 0.8), Math.max(11, length * 0.76), outerGasTint, 1);
-  drawBulletShape(body, Math.max(4, width * 0.68), Math.max(9, length * 0.64), innerGasTint, 1);
-  drawBulletShape(core, Math.max(2, width * 0.22), Math.max(4, length * 0.24), coreTint, 1);
+  const core = scene.add.graphics().setDepth(180).setBlendMode(Phaser.BlendModes.ADD);
+  drawBulletShape(glow, Math.max(6, width * 0.88), Math.max(12, length * 0.8), shellTint, 0.12);
+  drawBulletShape(body, Math.max(6, width * 0.9), Math.max(13, length * 0.84), shellTint, 0.64);
+  drawBulletShape(body, Math.max(5, width * 0.8), Math.max(11, length * 0.76), outerGasTint, 0.36);
+  drawBulletShape(body, Math.max(4, width * 0.68), Math.max(9, length * 0.64), innerGasTint, 0.26);
+  drawBulletShape(core, Math.max(2, width * 0.24), Math.max(4, length * 0.28), coreTint, 0.3);
   glow.x = x;
   glow.y = y;
   body.x = x;
@@ -350,15 +350,15 @@ function createRemoteBulletVisual(scene, remoteBullet) {
 function createOnlineMissileVisual(scene, strike) {
   const startX = scene.boardOriginX + Number(strike.x || 0);
   const startY = scene.boardOriginY + Number(strike.y || 0);
-  const missileTint = 0xa81818;
-  const glowTint = 0x8a1414;
-  const coreTint = 0xc22626;
-  const glow = scene.add.graphics().setDepth(188);
+  const missileTint = 0xb21d1d;
+  const glowTint = 0xe96f68;
+  const coreTint = 0xe45454;
+  const glow = scene.add.graphics().setDepth(188).setBlendMode(Phaser.BlendModes.ADD);
   const body = scene.add.graphics().setDepth(189);
-  const core = scene.add.graphics().setDepth(190);
-  drawBulletShape(glow, 9, 38, glowTint, 1);
-  drawBulletShape(body, 7, 34, missileTint, 1);
-  drawBulletShape(core, 2, 15, coreTint, 1);
+  const core = scene.add.graphics().setDepth(190).setBlendMode(Phaser.BlendModes.ADD);
+  drawBulletShape(glow, 9, 38, glowTint, 0.08);
+  drawBulletShape(body, 7, 34, missileTint, 0.94);
+  drawBulletShape(core, 2, 16, coreTint, 0.54);
   glow.x = startX;
   glow.y = startY;
   body.x = startX;
