@@ -2212,6 +2212,7 @@ function updateRespawns(now) {
 }
 
 function updateMissileStrikes(now) {
+  gameplayRoom.missileImpactEffects = (gameplayRoom.missileImpactEffects || []).filter((effect) => Number(effect?.expiresAt || 0) > now);
   if (!Array.isArray(gameplayRoom.activeMissileStrikes) || !gameplayRoom.activeMissileStrikes.length) return;
   const remaining = [];
   const stepDist = MISSILE_STRIKE_SPEED * (TICK_MS / 1000);
@@ -2239,7 +2240,6 @@ function updateMissileStrikes(now) {
     remaining.push(strike);
   });
   gameplayRoom.activeMissileStrikes = remaining;
-  gameplayRoom.missileImpactEffects = (gameplayRoom.missileImpactEffects || []).filter((effect) => Number(effect?.expiresAt || 0) > now);
 }
 
 function tick() {

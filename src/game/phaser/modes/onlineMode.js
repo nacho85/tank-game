@@ -297,6 +297,12 @@ function destroyRemoteBulletVisual(bullet) {
 
 function destroyOnlineMissileVisual(missile) {
   missile?.smokeTimer?.remove?.(false);
+  (missile?.trailParticles || []).forEach((particle) => {
+    particle?.cleanupCall?.remove?.(false);
+    particle?.emberCore?.destroy?.();
+    particle?.emberGlow?.destroy?.();
+  });
+  missile.trailParticles = [];
   missile?.glow?.destroy?.();
   missile?.body?.destroy?.();
   missile?.core?.destroy?.();
@@ -316,10 +322,10 @@ function createRemoteBulletVisual(scene, remoteBullet) {
   const body = scene.add.graphics().setDepth(179);
   const core = scene.add.graphics().setDepth(180).setBlendMode(Phaser.BlendModes.ADD);
   drawBulletShape(glow, Math.max(6, width * 0.88), Math.max(13, length * 0.82), shellTint, 0.12);
-  drawBulletShape(body, Math.max(6, width * 0.9), Math.max(14, length * 0.86), shellTint, 0.64);
-  drawBulletShape(body, Math.max(5, width * 0.8), Math.max(12, length * 0.78), outerGasTint, 0.36);
-  drawBulletShape(body, Math.max(4, width * 0.68), Math.max(10, length * 0.66), innerGasTint, 0.26);
-  drawBulletShape(core, Math.max(2, width * 0.24), Math.max(5, length * 0.3), coreTint, 0.3);
+  drawBulletShape(body, Math.max(6, width * 0.9), Math.max(14, length * 0.86), shellTint, 1);
+  drawBulletShape(body, Math.max(5, width * 0.8), Math.max(12, length * 0.78), outerGasTint, 0.82);
+  drawBulletShape(body, Math.max(4, width * 0.68), Math.max(10, length * 0.66), innerGasTint, 1);
+  drawBulletShape(core, Math.max(2, width * 0.24), Math.max(5, length * 0.3), coreTint, 1);
   glow.x = x;
   glow.y = y;
   body.x = x;
@@ -350,15 +356,19 @@ function createRemoteBulletVisual(scene, remoteBullet) {
 function createOnlineMissileVisual(scene, strike) {
   const startX = scene.boardOriginX + Number(strike.x || 0);
   const startY = scene.boardOriginY + Number(strike.y || 0);
-  const missileTint = 0xff0000;
-  const glowTint = 0xff5a5a;
-  const coreTint = 0xff2a2a;
-  const glow = scene.add.graphics().setDepth(188).setBlendMode(Phaser.BlendModes.ADD);
+  const missileTint = 0xb30000;
+  const shellTint = darkenTint(missileTint, 0.18);
+  const gasTint = darkenTint(missileTint, 0.08);
+  const innerGasTint = brightenTint(missileTint, 0.04);
+  const coreTint = brightenTint(missileTint, 0.1);
+  const glow = scene.add.graphics().setDepth(188);
   const body = scene.add.graphics().setDepth(189);
   const core = scene.add.graphics().setDepth(190).setBlendMode(Phaser.BlendModes.ADD);
-  drawBulletShape(glow, 9, 38, glowTint, 0.08);
-  drawBulletShape(body, 7, 34, missileTint, 0.94);
-  drawBulletShape(core, 2, 16, coreTint, 0.54);
+  drawBulletShape(glow, 7, 34, shellTint, 0.14);
+  drawBulletShape(body, 7, 34, shellTint, 1);
+  drawBulletShape(body, 6, 31, gasTint, 0.86);
+  drawBulletShape(body, 5, 27, innerGasTint, 1);
+  drawBulletShape(core, 2, 16, coreTint, 1);
   glow.x = startX;
   glow.y = startY;
   body.x = startX;
@@ -398,6 +408,11 @@ function createOnlineMissileVisual(scene, strike) {
         .setBlendMode(Phaser.BlendModes.ADD);
       scene.entityLayer.add(emberGlow);
       scene.entityLayer.add(emberCore);
+      const particle = {
+        emberCore,
+        emberGlow,
+        cleanupCall: null,
+      };
       scene.tweens.add({
         targets: [emberCore, emberGlow],
         alpha: 0,
@@ -407,14 +422,25 @@ function createOnlineMissileVisual(scene, strike) {
         y: tailY - (Math.sin(trailAngle) * 10),
         duration: 220,
         onComplete: () => {
+          if (missileRef?.trailParticles) {
+            missileRef.trailParticles = missileRef.trailParticles.filter((entry) => entry !== particle);
+          }
+          particle.cleanupCall?.remove?.(false);
           emberCore.destroy();
           emberGlow.destroy();
         },
       });
+      particle.cleanupCall = scene.time.delayedCall(260, () => {
+        if (missileRef?.trailParticles) {
+          missileRef.trailParticles = missileRef.trailParticles.filter((entry) => entry !== particle);
+        }
+        emberCore.destroy();
+        emberGlow.destroy();
+      });
+      missileRef?.trailParticles?.push?.(particle);
     },
   });
-
-  return {
+  const missileRef = {
     id: strike.id,
     ownerId: strike.ownerId,
     targetId: strike.targetId,
@@ -423,6 +449,7 @@ function createOnlineMissileVisual(scene, strike) {
     body,
     core,
     smokeTimer,
+    trailParticles: [],
     x: startX,
     y: startY,
     targetX: startX,
@@ -440,6 +467,7 @@ function createOnlineMissileVisual(scene, strike) {
     lastSeenAt: strike.optimistic ? 0 : Date.now(),
     expiresAt: Number(strike.expiresAt || 0),
   };
+  return missileRef;
 }
 
 function syncOnlineMissileStrikes(scene, activeMissileStrikes = [], serverTime = Date.now()) {
@@ -800,33 +828,28 @@ function spawnOnlineMissileImpactEffect(scene, worldX, worldY) {
     glow,
     core,
     rafId: null,
-    duration: 160,
   };
   scene.onlineState.effects.push(effect);
-
-  const startAt = performance.now();
-  const animate = (now) => {
-    if (!effect.glow?.active || !effect.core?.active) {
-      scene.onlineState.effects = scene.onlineState.effects.filter((entry) => entry !== effect);
-      return;
-    }
-    const progress = Math.max(0, Math.min(1, (now - startAt) / effect.duration));
-    const eased = 1 - Math.pow(1 - progress, 2);
-    effect.glow.setRadius(10 + (16 * eased));
-    effect.core.setRadius(5 + (6 * eased));
-    effect.glow.setAlpha(0.4 * (1 - eased));
-    effect.core.setAlpha(0.82 * (1 - eased));
-    if (progress >= 1) {
-      scene.onlineState.effects = scene.onlineState.effects.filter((entry) => entry !== effect);
-      destroyOnlineEffect(effect);
-      return;
-    }
-    effect.rafId = window.requestAnimationFrame(animate);
-  };
-
-  if (typeof window !== "undefined") {
-    effect.rafId = window.requestAnimationFrame(animate);
-  }
+  scene.tweens.add({
+    targets: glow,
+    alpha: 0,
+    scaleX: 2.2,
+    scaleY: 2.2,
+    duration: 150,
+    ease: "Quad.Out",
+  });
+  scene.tweens.add({
+    targets: core,
+    alpha: 0,
+    scaleX: 2,
+    scaleY: 2,
+    duration: 130,
+    ease: "Quad.Out",
+  });
+  scene.time.delayedCall(170, () => {
+    scene.onlineState.effects = scene.onlineState.effects.filter((entry) => entry !== effect);
+    destroyOnlineEffect(effect);
+  });
 }
 
 function syncOnlineMissileImpactEffects(scene, missileImpactEffects = []) {
