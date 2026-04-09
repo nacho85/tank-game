@@ -7,6 +7,7 @@ export const ONLINE_MESSAGE = {
   ERROR: "error",
   PLAYER_FIRED: "player_fired",
   PICKUP_POWER_UP: "pickup_power_up",
+  GAMEPLAY_CHAT: "gameplay_chat",
 };
 
 export function normalizeWsUrl(rawUrl) {

@@ -36,10 +36,13 @@ function persistLocalGameSettings(selectedMode, localSettings = null) {
 export default function TankGameRuntime({ localGameMode = null, localGameSettings = null, onExit = () => {} }) {
   const mountRef = useRef(null);
   const gameRef = useRef(null);
+  const onlineChatInputRef = useRef(null);
   const [error, setError] = useState("");
   const [gameViewport, setGameViewport] = useState({ width: GAME_WIDTH, height: GAME_HEIGHT });
   const [onlineOverlay, setOnlineOverlay] = useState(null);
   const [localOverlay, setLocalOverlay] = useState(null);
+  const [onlineChatOpen, setOnlineChatOpen] = useState(false);
+  const [onlineChatDraft, setOnlineChatDraft] = useState("");
 
   useEffect(() => {
     setGameViewport(computeGameViewport());
@@ -101,6 +104,56 @@ export default function TankGameRuntime({ localGameMode = null, localGameSetting
     window.addEventListener("tank-game:online-overlay", handleOnlineOverlay);
     return () => window.removeEventListener("tank-game:online-overlay", handleOnlineOverlay);
   }, []);
+
+  useEffect(() => {
+    if (!onlineOverlay) {
+      setOnlineChatOpen(false);
+      setOnlineChatDraft("");
+    }
+  }, [onlineOverlay]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    window.dispatchEvent(new CustomEvent("tank-game:online-chat-state", { detail: { open: onlineChatOpen } }));
+    return undefined;
+  }, [onlineChatOpen]);
+
+  useEffect(() => {
+    if (!onlineChatOpen) return;
+    onlineChatInputRef.current?.focus?.();
+    onlineChatInputRef.current?.select?.();
+  }, [onlineChatOpen]);
+
+  useEffect(() => {
+    function handleOnlineChatKeyDown(event) {
+      if (!onlineOverlay || onlineOverlay.showSummary) return;
+      const activationCode = Number(onlineOverlay.chatKeyCode || 13);
+      const pressedCode = Number(event.keyCode || event.which || 0);
+      if (!onlineChatOpen && pressedCode === activationCode) {
+        event.preventDefault();
+        setOnlineChatOpen(true);
+        return;
+      }
+      if (event.key === "Enter" && onlineChatOpen) {
+        event.preventDefault();
+        const trimmed = onlineChatDraft.trim().slice(0, 90);
+        if (trimmed) {
+          window.dispatchEvent(new CustomEvent("tank-game:online-chat-submit", { detail: { text: trimmed } }));
+        }
+        setOnlineChatDraft("");
+        setOnlineChatOpen(false);
+        return;
+      }
+      if (event.key === "Escape" && onlineChatOpen) {
+        event.preventDefault();
+        setOnlineChatDraft("");
+        setOnlineChatOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleOnlineChatKeyDown);
+    return () => window.removeEventListener("keydown", handleOnlineChatKeyDown);
+  }, [onlineOverlay, onlineChatOpen, onlineChatDraft]);
 
   useEffect(() => {
     function handleLocalOverlay(event) {
@@ -363,6 +416,73 @@ export default function TankGameRuntime({ localGameMode = null, localGameSetting
                     </div>
                   ))}
                 </div>
+              </div>
+            ) : null}
+
+            {Array.isArray(onlineOverlay.chatMessages) && onlineOverlay.chatMessages.length ? (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 56,
+                  right: 18,
+                  width: "min(34%, 360px)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  alignItems: "stretch",
+                }}
+              >
+                {onlineOverlay.chatMessages.map((message) => (
+                  <div
+                    key={message.id}
+                    style={{
+                      alignSelf: "stretch",
+                      background: "rgba(5, 10, 14, 0.68)",
+                      border: "1px solid rgba(220, 232, 240, 0.16)",
+                      padding: "6px 9px",
+                      fontSize: 13,
+                      lineHeight: 1.25,
+                      boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
+                      textShadow: "0 1px 2px rgba(0,0,0,0.82)",
+                    }}
+                  >
+                    <span style={{ color: message.color || "#f3f4f6", fontWeight: 800 }}>{message.author}:</span>
+                    <span style={{ color: "#f3f4f6" }}> {message.text}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {onlineChatOpen ? (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 56 + ((Array.isArray(onlineOverlay.chatMessages) ? onlineOverlay.chatMessages.length : 0) * 38) + 8,
+                  right: 18,
+                  width: "min(34%, 360px)",
+                  pointerEvents: "auto",
+                }}
+              >
+                <input
+                  ref={onlineChatInputRef}
+                  maxLength={90}
+                  onChange={(event) => setOnlineChatDraft(event.target.value)}
+                  placeholder={`Abriste chat con ${onlineOverlay.chatKeyLabel || "Enter"} · enviá con Enter`}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    background: "rgba(8, 14, 18, 0.94)",
+                    border: "1px solid rgba(121, 208, 255, 0.62)",
+                    color: "#f4fbff",
+                    padding: "8px 10px",
+                    fontSize: 13,
+                    fontFamily: '"Courier New", "Courier Prime", Courier, "Liberation Mono", monospace',
+                    outline: "none",
+                    boxShadow: "0 0 0 2px rgba(67, 160, 214, 0.18)",
+                  }}
+                  type="text"
+                  value={onlineChatDraft}
+                />
               </div>
             ) : null}
           </div>

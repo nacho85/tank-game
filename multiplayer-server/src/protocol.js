@@ -27,4 +27,5 @@ export const MESSAGE = {
   PLAYER_FIRED: "player_fired",
   ROUND_START: "round_start",
   PICKUP_POWER_UP: "pickup_power_up",
+  GAMEPLAY_CHAT: "gameplay_chat",
 };

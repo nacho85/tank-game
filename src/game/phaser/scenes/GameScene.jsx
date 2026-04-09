@@ -174,6 +174,7 @@ const PLAYER_BINDING_ROWS = [
   { key: "aimLeft", label: "Apuntar izquierda", settingKey: (slot) => `p${slot}AimLeftKeyCode` },
   { key: "aimRight", label: "Apuntar derecha", settingKey: (slot) => `p${slot}AimRightKeyCode` },
   { key: "fire", label: "Disparar", settingKey: (slot) => `p${slot}FireKeyCode` },
+  { key: "chat", label: "Chat online", settingKey: () => "p1ChatKeyCode", keyboardOnly: true },
 ];
 
 export class GameScene extends Phaser.Scene {
@@ -1243,13 +1244,14 @@ export class GameScene extends Phaser.Scene {
       },
       ...PLAYER_BINDING_ROWS.map((item) => {
         const settingKey = item.settingKey(slot);
+        const useKeyboardBinding = !!item.keyboardOnly || !isGamepad;
         return {
           type: "binding",
           bindingKey: item.key,
           label: item.label,
           settingKey,
-          value: isGamepad ? this.getGamepadBindingLabel(item.key, slot) : this.getKeyLabel(this.settings?.[settingKey]),
-          editable: !isGamepad,
+          value: useKeyboardBinding ? this.getKeyLabel(this.settings?.[settingKey]) : this.getGamepadBindingLabel(item.key, slot),
+          editable: useKeyboardBinding,
         };
       }),
     ];

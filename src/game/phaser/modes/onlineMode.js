@@ -203,6 +203,11 @@ function hideOnlineOverlay(scene) {
   scene.onlineState.overlaySignature = "";
 }
 
+function setOnlineChatInputActive(scene, active) {
+  if (!scene?.onlineState) return;
+  scene.onlineState.chatInputActive = !!active;
+}
+
 function formatOverlaySummary(summary, isFinal) {
   if (!summary) return null;
 
@@ -237,9 +242,11 @@ function buildOnlineOverlay(scene) {
     ? players.find((player) => player.id !== localPlayer.id && player.colorTeam === localPlayer.colorTeam) || null
     : null;
   const summary = snapshot?.matchSummary || null;
+  const chatMessages = Array.isArray(snapshot?.chatMessages) ? snapshot.chatMessages.slice(-4) : [];
   const wantsStatsPanel = scene.keys.tab?.isDown || scene.readPadButtonPressed(8, 0.35, 0);
   const summaryVisible = !!summary && (!!roundState?.matchOver || !!roundState?.showPartialSummary || wantsStatsPanel);
   const summaryData = summaryVisible ? formatOverlaySummary(summary, !!roundState?.matchOver) : null;
+  const chatKeyCode = Math.round(Number(scene.settings?.p1ChatKeyCode || 13));
 
   return {
     connected: online.connectionState === "conectado",
@@ -255,6 +262,9 @@ function buildOnlineOverlay(scene) {
     summaryFinal: !!summaryData?.summaryFinal,
     summaryTitle: summaryData?.summaryTitle || "",
     teams: summaryData?.teams || [],
+    chatMessages,
+    chatKeyCode,
+    chatKeyLabel: scene.getKeyLabel?.(chatKeyCode) || "Enter",
   };
 }
 
@@ -719,6 +729,9 @@ function createRemoteTankVisual(scene, remoteTank) {
 }
 
 function buildLocalInput(scene) {
+  if (scene.onlineState?.chatInputActive) {
+    return { moveX: 0, moveY: 0, aimX: 0, aimY: 0, fire: false };
+  }
   const move = scene.getPlayerMoveInput({ controlSlot: 1 });
   const aim = scene.getPlayerAimInput({ controlSlot: 1 });
   const fireDown = scene.isControlledTankFirePressed({ type: "player", controlSlot: 1, activeBullets: [], fireLatch: scene.onlineState.localFireLatch, shotCooldown: 0 });
@@ -1293,6 +1306,14 @@ function syncSnapshot(scene, snapshot) {
 }
 
 export function teardownOnlineMode(scene) {
+  if (typeof window !== "undefined") {
+    if (scene.onlineState?.handleChatStateChange) {
+      window.removeEventListener("tank-game:online-chat-state", scene.onlineState.handleChatStateChange);
+    }
+    if (scene.onlineState?.handleChatSubmit) {
+      window.removeEventListener("tank-game:online-chat-submit", scene.onlineState.handleChatSubmit);
+    }
+  }
   scene.onlineClient?.disconnect?.();
   scene.onlineClient = null;
   hideOnlineOverlay(scene);
@@ -1325,6 +1346,7 @@ export function teardownOnlineMode(scene) {
     lastKnownRound: 1,
     matchOverShown: false,
     menuExitArmed: false,
+    chatInputActive: false,
     overlaySignature: "",
     effects: [],
     onlinePowerUpsById: {},
@@ -1355,6 +1377,16 @@ export function loadOnlineMode(scene) {
 
   scene.onlineState.connectionState = "conectando";
   scene.onlineState.matchConfig = preloadedMatchConfig;
+  if (typeof window !== "undefined") {
+    scene.onlineState.handleChatStateChange = (event) => setOnlineChatInputActive(scene, !!event.detail?.open);
+    scene.onlineState.handleChatSubmit = (event) => {
+      const text = String(event.detail?.text || "").trim();
+      if (!text) return;
+      scene.onlineClient?.sendRaw?.({ type: "gameplay_chat", payload: { text } });
+    };
+    window.addEventListener("tank-game:online-chat-state", scene.onlineState.handleChatStateChange);
+    window.addEventListener("tank-game:online-chat-submit", scene.onlineState.handleChatSubmit);
+  }
   scene.onlineClient = createOnlineSocketClient({
     onConnectionStateChange: (state) => {
       scene.onlineState.connectionState = state;

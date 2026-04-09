@@ -174,11 +174,11 @@ const AI_DIFFICULTY_OPTIONS = ["Facil", "Normal", "Dificil", "Massacre"];
 const DEFAULT_PLAYER_COLOR = "#d8b13a";
 const RANDOM_PLAYER_COLOR = "Azar";
 const COLOR_PALETTE = [
-  "#f4c430", "#00bcd4", "#ef476f", "#8ac926", "#7b2cbf", "#c2b280",
-  "#3a86ff", "#ff9f1c", "#06d6a0", "#c1121f", "#f5f5f5", "#a47148",
-  "#ff66c4", "#2dc653", "#4361ee", "#ffd166", "#6b7280", "#00a6fb",
-  "#b5179e", "#c0ca33", "#ff7f50", "#111827", "#4cc9f0", "#e11d48",
-  "#374151", "#39d353", "#ffb703", "#14b8a6", "#8b5cf6",
+  "#f5f5f5", "#ffd166", "#c2b280", "#f4c430", "#ffb703", "#c0ca33",
+  "#8ac926", "#39d353", "#2dc653", "#4cc9f0", "#00bcd4", "#14b8a6",
+  "#06d6a0", "#ff9f1c", "#ff7f50", "#ef476f", "#ff66c4", "#e11d48",
+  "#c1121f", "#00a6fb", "#3a86ff", "#4361ee", "#8b5cf6", "#7b2cbf",
+  "#b5179e", "#a47148", "#6b7280", "#374151", "#111827",
 ];
 const ALLOWED_PLAYER_COLORS = new Set(COLOR_PALETTE);
 const UNASSIGNED_TEAM = "-";

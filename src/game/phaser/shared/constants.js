@@ -215,6 +215,15 @@ export const SETTINGS_SCHEMA = [
     defaultValue: 32,
   },
   {
+    key: "p1ChatKeyCode",
+    label: "P1 chat online",
+    category: "bindings",
+    min: 0,
+    max: 255,
+    step: 1,
+    defaultValue: 13,
+  },
+  {
     key: "p2MoveUpKeyCode",
     label: "P2 mover arriba",
     category: "bindings",

@@ -35,13 +35,18 @@ const DEFAULT_DENSITY = "Normal (1x)";
 const POWER_UP_PICKUP_RADIUS = 38;
 const MAX_HOSTED_ROOMS_PER_IP = 2;
 const DEFAULT_AI_DIFFICULTY = "Normal";
+const GAMEPLAY_CHAT_TTL_MS = 7000;
+const GAMEPLAY_CHAT_MAX_LEN = 90;
+const GAMEPLAY_CHAT_FLOOD_COUNT = 4;
+const GAMEPLAY_CHAT_FLOOD_WINDOW_MS = 5000;
+const GAMEPLAY_CHAT_MUTE_MS = 12000;
 const RANDOM_PLAYER_COLOR = "Azar";
 const RANDOM_COLOR_POOL = [
-  "#f4c430", "#00bcd4", "#ef476f", "#8ac926", "#7b2cbf", "#c2b280",
-  "#3a86ff", "#ff9f1c", "#06d6a0", "#c1121f", "#f5f5f5", "#a47148",
-  "#ff66c4", "#2dc653", "#4361ee", "#ffd166", "#6b7280", "#00a6fb",
-  "#b5179e", "#c0ca33", "#ff7f50", "#111827", "#4cc9f0", "#e11d48",
-  "#374151", "#39d353", "#ffb703", "#14b8a6", "#8b5cf6",
+  "#f5f5f5", "#ffd166", "#c2b280", "#f4c430", "#ffb703", "#c0ca33",
+  "#8ac926", "#39d353", "#2dc653", "#4cc9f0", "#00bcd4", "#14b8a6",
+  "#06d6a0", "#ff9f1c", "#ff7f50", "#ef476f", "#ff66c4", "#e11d48",
+  "#c1121f", "#00a6fb", "#3a86ff", "#4361ee", "#8b5cf6", "#7b2cbf",
+  "#b5179e", "#a47148", "#6b7280", "#374151", "#111827",
 ];
 const ALLOWED_PLAYER_COLORS = new Set(RANDOM_COLOR_POOL);
 const AI_CELEBRITY_NAMES = [
@@ -306,6 +311,7 @@ const legacyGameplayRoom = {
   powerUps: [],                  // power-ups activos en el mapa
   activeMissileStrikes: [],
   missileImpactEffects: [],
+  chatMessages: [],
   baseFortressEffects: new Map(),
   teamFreezeEffects: new Map(),
   totalKillsLifetime: 0,         // bajas acumuladas en toda la partida
@@ -334,6 +340,7 @@ function createGameplayRoom(roomId, matchConfig = null) {
     powerUps: [],
     activeMissileStrikes: [],
     missileImpactEffects: [],
+    chatMessages: [],
     baseFortressEffects: new Map(),
     teamFreezeEffects: new Map(),
     totalKillsLifetime: 0,
@@ -405,6 +412,7 @@ function resetGameplayRoomState(matchConfig = null) {
   gameplayRoom.powerUps = [];
   gameplayRoom.activeMissileStrikes = [];
   gameplayRoom.missileImpactEffects = [];
+  gameplayRoom.chatMessages = [];
   gameplayRoom.baseFortressEffects.clear();
   gameplayRoom.teamFreezeEffects.clear();
   gameplayRoom.totalKillsLifetime = 0;
@@ -1428,6 +1436,46 @@ function broadcastRoomDetail(roomId) {
   room.watchers.forEach((clientId) => sendToClient(clientId, MESSAGE.ROOM_DETAIL, payload));
 }
 
+function pushGameplayChatMessage(player, text, now = Date.now()) {
+  if (!player || !text) return;
+  const trimmed = String(text || "").trim().slice(0, GAMEPLAY_CHAT_MAX_LEN);
+  if (!trimmed) return;
+  gameplayRoom.chatMessages.push({
+    id: `game-chat-${now}-${Math.random().toString(36).slice(2, 7)}`,
+    playerId: player.id,
+    author: player.label || "Player",
+    text: trimmed,
+    color: player.visualColor || "#f5f5f5",
+    createdAt: now,
+    expiresAt: now + GAMEPLAY_CHAT_TTL_MS,
+  });
+  if (gameplayRoom.chatMessages.length > 24) {
+    gameplayRoom.chatMessages = gameplayRoom.chatMessages.slice(-24);
+  }
+}
+
+function sendGameplayChat(clientId, payload = {}) {
+  const player = gameplayRoom.players.get(clientId);
+  if (!player || player.isDestroyed) return;
+  const now = Date.now();
+  if (Number(player.chatMutedUntil || 0) > now) {
+    const secondsLeft = Math.max(1, Math.ceil((Number(player.chatMutedUntil || 0) - now) / 1000));
+    sendToClient(clientId, MESSAGE.ERROR, { message: `Chat bloqueado ${secondsLeft}s por flood.` });
+    return;
+  }
+
+  player.chatMessageTimes = (player.chatMessageTimes || []).filter((timestamp) => (now - Number(timestamp || 0)) <= GAMEPLAY_CHAT_FLOOD_WINDOW_MS);
+  if (player.chatMessageTimes.length >= GAMEPLAY_CHAT_FLOOD_COUNT) {
+    player.chatMutedUntil = now + GAMEPLAY_CHAT_MUTE_MS;
+    player.chatMessageTimes = [];
+    sendToClient(clientId, MESSAGE.ERROR, { message: `Flood detectado: chat bloqueado ${Math.ceil(GAMEPLAY_CHAT_MUTE_MS / 1000)}s.` });
+    return;
+  }
+
+  pushGameplayChatMessage(player, payload?.text, now);
+  player.chatMessageTimes.push(now);
+}
+
 function attachWatcher(room, clientId) {
   room.watchers.add(clientId);
   const client = getClient(clientId);
@@ -1872,6 +1920,7 @@ function startNewRound() {
   gameplayRoom.powerUps = [];
   gameplayRoom.activeMissileStrikes = [];
   gameplayRoom.missileImpactEffects = [];
+  gameplayRoom.chatMessages = [];
   gameplayRoom.baseFortressEffects.clear();
   gameplayRoom.teamFreezeEffects.clear();
 
@@ -1993,6 +2042,7 @@ function buildSnapshot() {
     })),
     activeMissileStrikes: gameplayRoom.activeMissileStrikes.map((strike) => ({ ...strike })),
     missileImpactEffects: gameplayRoom.missileImpactEffects.map((effect) => ({ ...effect })),
+    chatMessages: gameplayRoom.chatMessages.map((message) => ({ ...message })),
     bases: Array.from(gameplayRoom.bases.values()).map((base) => ({ ...base })),
     powerUps: gameplayRoom.powerUps.map((pu) => ({ ...pu })),
     floor: gameplayRoom.level.floor,
@@ -2063,6 +2113,8 @@ function createPlayer(
     respawnAt: 0,
     lastFireAt: 0,
     lastFirePressed: false,
+    chatMessageTimes: [],
+    chatMutedUntil: 0,
     starCount: tier.starLevel,
     bulletCount: tier.bulletCount,
     bulletSpeed: tier.bulletSpeed,
@@ -2116,6 +2168,7 @@ function handleJoin(clientId, ws, payload = {}) {
       gameplayRoom.bullets.clear();
       gameplayRoom.playerStats.clear();
       gameplayRoom.powerUps = [];
+      gameplayRoom.chatMessages = [];
       gameplayRoom.totalKillsLifetime = 0;
       gameplayRoom.powerUpKillMilestone = 3;
 
@@ -2298,6 +2351,7 @@ function updateMissileStrikes(now) {
 function tick() {
   const now = Date.now();
   let allowInterRoundMovement = false;
+  gameplayRoom.chatMessages = (gameplayRoom.chatMessages || []).filter((message) => Number(message?.expiresAt || 0) > now);
   updateOnlinePowerUps(now);
   updateBaseFortressEffects(TICK_MS);
   updateTeamFreezeEffects(TICK_MS);
@@ -2707,6 +2761,13 @@ wss.on("connection", (ws) => {
               const player = gameplayRoom.players.get(clientId);
               tryFirePlayer(player);
             });
+          }
+          break;
+        }
+        case MESSAGE.GAMEPLAY_CHAT: {
+          const match = getGameplayRoomForClient(clientId);
+          if (match) {
+            runInGameplayRoom(match, () => sendGameplayChat(clientId, message.payload || {}));
           }
           break;
         }
