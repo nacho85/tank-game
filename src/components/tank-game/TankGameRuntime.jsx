@@ -379,7 +379,7 @@ export default function TankGameRuntime({ localGameMode = null, localGameSetting
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "minmax(220px, 1fr) 88px 88px 88px 88px",
+                          gridTemplateColumns: "minmax(180px, 1fr) 78px 78px 78px 64px 78px 78px",
                           gap: 10,
                           fontSize: 14,
                           color: "#a9bfd0",
@@ -387,8 +387,10 @@ export default function TankGameRuntime({ localGameMode = null, localGameSetting
                         }}
                       >
                         <div>Jugador</div>
+                        <div style={{ textAlign: "right" }}>Daño</div>
                         <div style={{ textAlign: "right" }}>Bases</div>
                         <div style={{ textAlign: "right" }}>Kills</div>
+                        <div style={{ textAlign: "right" }}>TK</div>
                         <div style={{ textAlign: "right" }}>Deaths</div>
                         <div style={{ textAlign: "right" }}>Acc</div>
                       </div>
@@ -398,7 +400,7 @@ export default function TankGameRuntime({ localGameMode = null, localGameSetting
                           key={`${team.id}-${player.label}-${index}`}
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "minmax(220px, 1fr) 88px 88px 88px 88px",
+                            gridTemplateColumns: "minmax(180px, 1fr) 78px 78px 78px 64px 78px 78px",
                             gap: 10,
                             fontSize: 18,
                             fontWeight: 700,
@@ -407,8 +409,10 @@ export default function TankGameRuntime({ localGameMode = null, localGameSetting
                           }}
                         >
                           <div>{player.label}</div>
+                          <div style={{ textAlign: "right" }}>{player.points}</div>
                           <div style={{ textAlign: "right" }}>{player.basesDestroyed}</div>
                           <div style={{ textAlign: "right" }}>{player.kills}</div>
+                          <div style={{ textAlign: "right" }}>{player.teamKills}</div>
                           <div style={{ textAlign: "right" }}>{player.deaths}</div>
                           <div style={{ textAlign: "right" }}>{player.accuracy}%</div>
                         </div>
@@ -467,6 +471,9 @@ export default function TankGameRuntime({ localGameMode = null, localGameSetting
                   ref={onlineChatInputRef}
                   maxLength={90}
                   onChange={(event) => setOnlineChatDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                  }}
                   placeholder={`Abriste chat con ${onlineOverlay.chatKeyLabel || "Enter"} · enviá con Enter`}
                   style={{
                     width: "100%",

@@ -40,6 +40,9 @@ const GAMEPLAY_CHAT_MAX_LEN = 90;
 const GAMEPLAY_CHAT_FLOOD_COUNT = 4;
 const GAMEPLAY_CHAT_FLOOD_WINDOW_MS = 5000;
 const GAMEPLAY_CHAT_MUTE_MS = 12000;
+const ONLINE_POINTS_ENEMY_KILL = 50;
+const ONLINE_POINTS_BASE_DESTROYED = 150;
+const ONLINE_POINTS_TEAM_KILL = -75;
 const RANDOM_PLAYER_COLOR = "Azar";
 const RANDOM_COLOR_POOL = [
   "#f5f5f5", "#ffd166", "#c2b280", "#f4c430", "#ffb703", "#c0ca33",
@@ -938,12 +941,11 @@ function resolveMissileStrike(strike, now = Date.now()) {
 
   const ownerStats = ensurePlayerStats(owner, { label: owner?.label });
   const victimStats = ensurePlayerStats(target, { label: target.label });
-  if (ownerStats) {
-    ownerStats.hits += 1;
-    ownerStats.kills += 1;
-  }
+  const isEnemyKill = !!owner && owner.team !== target.team;
+  if (isEnemyKill) awardEnemyKillStats(ownerStats);
+  else awardTeamKillStats(ownerStats);
   if (victimStats) victimStats.deaths += 1;
-  registerOnlineKill();
+  if (isEnemyKill) registerOnlineKill();
   markPlayerDestroyed(target, now);
   return true;
 }
@@ -1131,8 +1133,10 @@ function createPlayerStats(player, { label } = {}) {
     label: label || player.role?.label || player.id,
     roleLabel: player.role?.label || player.id,
     colorTeam: player.colorTeam,
+    points: 0,
     basesDestroyed: 0,
     kills: 0,
+    teamKills: 0,
     deaths: 0,
     shots: 0,
     hits: 0,
@@ -1153,8 +1157,10 @@ function ensurePlayerStats(player, options = {}) {
 
 function buildMatchSummary() {
   const sortPlayers = (left, right) => (
-    (right.basesDestroyed - left.basesDestroyed)
+    (right.points - left.points)
+    || (right.basesDestroyed - left.basesDestroyed)
     || (right.kills - left.kills)
+    || (left.teamKills - right.teamKills)
     || (left.deaths - right.deaths)
     || (right.accuracy - left.accuracy)
     || String(left.label || "").localeCompare(String(right.label || ""))
@@ -1187,6 +1193,26 @@ function buildMatchSummary() {
     team1: createTeamSummary("team1", "Equipo 1"),
     team2: createTeamSummary("team2", "Equipo 2"),
   };
+}
+
+function awardEnemyKillStats(ownerStats) {
+  if (!ownerStats) return;
+  ownerStats.hits += 1;
+  ownerStats.kills += 1;
+  ownerStats.points += ONLINE_POINTS_ENEMY_KILL;
+}
+
+function awardTeamKillStats(ownerStats) {
+  if (!ownerStats) return;
+  ownerStats.teamKills += 1;
+  ownerStats.points += ONLINE_POINTS_TEAM_KILL;
+}
+
+function awardEnemyBaseDestroyedStats(ownerStats) {
+  if (!ownerStats) return;
+  ownerStats.hits += 1;
+  ownerStats.basesDestroyed += 1;
+  ownerStats.points += ONLINE_POINTS_BASE_DESTROYED;
 }
 
 function clearReconnectTimer(token) {
@@ -1932,9 +1958,6 @@ function startNewRound() {
       resetPlayerUpgradeState(player);
     }
     resetPlayerForRespawn(player);
-    if (!player.isBot) {
-      spawnMissilesPowerUpForPlayer(player, roundStartedAt);
-    }
   });
 
   broadcast(MESSAGE.ROUND_START, {
@@ -2222,7 +2245,6 @@ function handleJoin(clientId, ws, payload = {}) {
       usedColors: takenVisualColors,
     });
     gameplayRoom.players.set(clientId, player);
-    spawnMissilesPowerUpForPlayer(player);
     ensurePlayerStats(player, { label: player.label });
     ws.send(JSON.stringify({
       type: MESSAGE.WELCOME,
@@ -2588,9 +2610,8 @@ function tick() {
           if (base.hp <= 0) {
             const owner = gameplayRoom.players.get(bullet.ownerId);
             const ownerStats = ensurePlayerStats(owner, { label: owner?.label });
-            if (ownerStats) {
-              ownerStats.hits += 1;
-              ownerStats.basesDestroyed += 1;
+            if (ownerStats && owner?.team !== base.team) {
+              awardEnemyBaseDestroyedStats(ownerStats);
             }
             gameplayRoom.status.winnerTeam = base.team === "south" ? "north" : "south";
           }
@@ -2640,9 +2661,8 @@ function tick() {
         if (base.hp <= 0) {
           const owner = gameplayRoom.players.get(bullet.ownerId);
           const ownerStats = ensurePlayerStats(owner, { label: owner?.label });
-          if (ownerStats) {
-            ownerStats.hits += 1;
-            ownerStats.basesDestroyed += 1;
+          if (ownerStats && owner?.team !== base.team) {
+            awardEnemyBaseDestroyedStats(ownerStats);
           }
           gameplayRoom.status.winnerTeam = base.team === "south" ? "north" : "south";
         }
@@ -2660,12 +2680,11 @@ function tick() {
         const owner = gameplayRoom.players.get(bullet.ownerId);
         const ownerStats = ensurePlayerStats(owner, { label: owner?.label });
         const victimStats = ensurePlayerStats(player, { label: player.label });
-        if (ownerStats) {
-          ownerStats.hits += 1;
-          ownerStats.kills += 1;
-        }
+        const isEnemyKill = !!owner && owner.team !== player.team;
+        if (isEnemyKill) awardEnemyKillStats(ownerStats);
+        else awardTeamKillStats(ownerStats);
         if (victimStats) victimStats.deaths += 1;
-        registerOnlineKill();
+        if (isEnemyKill) registerOnlineKill();
         markPlayerDestroyed(player, now);
         queueBulletDestroy(bulletId);
         return;
