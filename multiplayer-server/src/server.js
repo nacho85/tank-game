@@ -35,11 +35,12 @@ const MAX_HOSTED_ROOMS_PER_IP = 2;
 const DEFAULT_AI_DIFFICULTY = "Normal";
 const RANDOM_PLAYER_COLOR = "Azar";
 const RANDOM_COLOR_POOL = [
-  "#d8b13a", "#f1c85c", "#f28b50", "#d4675f", "#b64a44", "#8d3d3d",
-  "#c96f96", "#a95bd4", "#6d78e0", "#436dad", "#5ca9ff", "#4db9bf",
-  "#49a87b", "#5f9b5b", "#7db55c", "#93c75d", "#d4d97a", "#9f8b6b",
-  "#cfc6b8", "#ffffff", "#7c7c7c", "#3f3f46",
+  "#f4c430", "#ffd166", "#ff9f1c", "#ff7f50", "#ef476f", "#c1121f",
+  "#ff66c4", "#b5179e", "#7b2cbf", "#4361ee", "#3a86ff", "#4cc9f0",
+  "#00bcd4", "#06d6a0", "#2dc653", "#8ac926", "#c0ca33", "#a47148",
+  "#c2b280", "#f5f5f5", "#9aa0a6", "#6b7280", "#374151", "#111827",
 ];
+const ALLOWED_PLAYER_COLORS = new Set(RANDOM_COLOR_POOL);
 const AI_CELEBRITY_NAMES = [
   "Messi",
   "Maradona",
@@ -429,14 +430,127 @@ const TEAM_TO_ROLE_IDS = { "1": ["yellow", "green"], "2": ["red", "blue"] };
 function normalizeCustomColor(value) {
   const normalized = String(value || "").trim();
   if (normalized === RANDOM_PLAYER_COLOR) return RANDOM_PLAYER_COLOR;
-  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : "#d8b13a";
+  const hexValue = /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : "#f4c430";
+  return ALLOWED_PLAYER_COLORS.has(hexValue) ? hexValue : "#f4c430";
 }
 
-function resolveVisualColor(value) {
+function pickRandomAvailableColor(usedColors = new Set()) {
+  const normalizedUsed = new Set(
+    Array.from(usedColors || [])
+      .map((color) => String(color || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const availableColors = RANDOM_COLOR_POOL.filter((color) => !normalizedUsed.has(color));
+  const pool = availableColors.length ? availableColors : RANDOM_COLOR_POOL;
+  return pool[Math.floor(Math.random() * pool.length)] || "#f4c430";
+}
+
+function resolveVisualColor(value, usedColors = new Set()) {
   if (value === RANDOM_PLAYER_COLOR) {
-    return RANDOM_COLOR_POOL[Math.floor(Math.random() * RANDOM_COLOR_POOL.length)] || "#d8b13a";
+    return pickRandomAvailableColor(usedColors);
   }
   return normalizeCustomColor(value);
+}
+
+function hexColorToNumber(value, fallback = 0xd8b13a) {
+  const normalized = String(value || "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(normalized)) {
+    return Number.parseInt(normalized.slice(1), 16);
+  }
+  return fallback;
+}
+
+function mixColorChannel(from, to, amount) {
+  return Math.round(from + ((to - from) * amount));
+}
+
+function brightenColor(color, amount = 0.35) {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  const nextR = mixColorChannel(r, 0xff, amount);
+  const nextG = mixColorChannel(g, 0xff, amount);
+  const nextB = mixColorChannel(b, 0xff, amount);
+  return (nextR << 16) | (nextG << 8) | nextB;
+}
+
+function colorToRgb(color) {
+  return {
+    r: (color >> 16) & 0xff,
+    g: (color >> 8) & 0xff,
+    b: color & 0xff,
+  };
+}
+
+function rgbToColor(r, g, b) {
+  return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff);
+}
+
+function rgbToHsv(r, g, b) {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const delta = max - min;
+
+  let h = 0;
+  if (delta > 0) {
+    if (max === rn) h = ((gn - bn) / delta) % 6;
+    else if (max === gn) h = ((bn - rn) / delta) + 2;
+    else h = ((rn - gn) / delta) + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+
+  const s = max === 0 ? 0 : delta / max;
+  const v = max;
+  return { h, s, v };
+}
+
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const hh = (h % 360) / 60;
+  const x = c * (1 - Math.abs((hh % 2) - 1));
+  let rn = 0;
+  let gn = 0;
+  let bn = 0;
+
+  if (hh >= 0 && hh < 1) [rn, gn, bn] = [c, x, 0];
+  else if (hh < 2) [rn, gn, bn] = [x, c, 0];
+  else if (hh < 3) [rn, gn, bn] = [0, c, x];
+  else if (hh < 4) [rn, gn, bn] = [0, x, c];
+  else if (hh < 5) [rn, gn, bn] = [x, 0, c];
+  else [rn, gn, bn] = [c, 0, x];
+
+  const m = v - c;
+  return {
+    r: Math.round((rn + m) * 255),
+    g: Math.round((gn + m) * 255),
+    b: Math.round((bn + m) * 255),
+  };
+}
+
+function toProjectileColor(color) {
+  const { r, g, b } = colorToRgb(color);
+  const { h, s, v } = rgbToHsv(r, g, b);
+
+  if (v < 0.18) return 0x050505;
+  if (v < 0.32 && s < 0.28) return 0x101010;
+  if (s < 0.12 && v > 0.82) return 0xf5f5f5;
+  if (s < 0.18 && v <= 0.82) return 0xbfc7d5;
+
+  if (h < 15 || h >= 345) return 0xff3b30;
+  if (h < 35) return 0xff7a00;
+  if (h < 58) return 0xffd400;
+  if (h < 85) return 0xb7ff00;
+  if (h < 155) return 0x00ff66;
+  if (h < 190) return 0x00ffd5;
+  if (h < 225) return 0x00c8ff;
+  if (h < 255) return 0x3d5afe;
+  if (h < 290) return 0x8b2cff;
+  if (h < 325) return 0xff00c8;
+  return 0xff2d6f;
 }
 
 function assignRoleFromSlot(slot, takenRoleIds) {
@@ -493,7 +607,29 @@ function rotateVector(x, y, angleRad) {
   };
 }
 
-function chooseNavigableDirection(player, targetX, targetY, probeDist, currentDir = null) {
+function getObstacleAhead(player, dir, distance = TILE_SIZE * 1.1) {
+  const probeX = player.x + (dir.x * distance);
+  const probeY = player.y + (dir.y * distance);
+  const col = worldToGridCol(probeX, 0);
+  const row = worldToGridRow(probeY, 0);
+  if (!inBounds(col, row)) return { tile: "out", col, row };
+  return {
+    tile: gameplayRoom.level.obstacles?.[row]?.[col] || null,
+    col,
+    row,
+  };
+}
+
+function shouldBotFireAtObstacle(player, dir, distance = TILE_SIZE * 1.1) {
+  const obstacle = getObstacleAhead(player, dir, distance);
+  if (!obstacle?.tile) return false;
+  if (obstacle.tile === TILE.BRICK) return true;
+  if (obstacle.tile === TILE.STEEL && player?.canDestroyStone) return true;
+  return false;
+}
+
+function chooseNavigableDirection(player, targetX, targetY, probeDist, currentDir = null, options = {}) {
+  const { canDestroyStone = false } = options;
   const toTarget = normalizeVector(targetX - player.x, targetY - player.y);
   const base = { x: toTarget.x, y: toTarget.y };
   const current = currentDir && (Math.abs(currentDir.x) > 0.001 || Math.abs(currentDir.y) > 0.001)
@@ -506,9 +642,14 @@ function chooseNavigableDirection(player, targetX, targetY, probeDist, currentDi
   candidateAngles.forEach((angle) => {
     const turned = angle === 0 ? base : rotateVector(base.x, base.y, angle);
     const dir = normalizeVector(turned.x, turned.y);
+    const obstacleAhead = getObstacleAhead(player, dir, probeDist);
     const step1X = player.x + (dir.x * probeDist);
     const step1Y = player.y + (dir.y * probeDist);
-    if (!canOccupyPlayerPosition(player, step1X, step1Y)) return;
+    if (!canOccupyPlayerPosition(player, step1X, step1Y)) {
+      if (!(obstacleAhead.tile === TILE.BRICK || (obstacleAhead.tile === TILE.STEEL && canDestroyStone))) {
+        return;
+      }
+    }
 
     const step2X = player.x + (dir.x * probeDist * 1.85);
     const step2Y = player.y + (dir.y * probeDist * 1.85);
@@ -518,7 +659,11 @@ function chooseNavigableDirection(player, targetX, targetY, probeDist, currentDi
     const alignment = ((dir.x * base.x) + (dir.y * base.y));
     const progress = -vectorLength(remainingDx, remainingDy);
     const continuity = current ? ((dir.x * current.x) + (dir.y * current.y)) : 0;
-    const score = progress + (alignment * 60) + (continuity * 12) + (secondStepOpen ? 16 : 0);
+    const isBreakableAhead = obstacleAhead.tile === TILE.BRICK || (obstacleAhead.tile === TILE.STEEL && canDestroyStone);
+    const steelPenalty = obstacleAhead.tile === TILE.STEEL && !canDestroyStone ? 140 : 0;
+    const brickBias = obstacleAhead.tile === TILE.BRICK ? 18 : 0;
+    const breakSteelBias = obstacleAhead.tile === TILE.STEEL && canDestroyStone ? 14 : 0;
+    const score = progress + (alignment * 60) + (continuity * 12) + (secondStepOpen ? 16 : 0) + brickBias + breakSteelBias - steelPenalty - (isBreakableAhead && !secondStepOpen ? 8 : 0);
 
     if (score > bestScore) {
       bestScore = score;
@@ -561,6 +706,40 @@ function spawnOnlinePowerUp() {
     spawnedAt,
     expiresAt: spawnedAt + POWER_DURATION_MS,
   });
+}
+
+function spawnMissilesPowerUpForPlayer(player, now = Date.now()) {
+  if (!player || !gameplayRoom.level?.obstacles) return false;
+  const forwardDir = player.team === "south" ? 1 : -1;
+  const candidateOffsets = [
+    { x: TILE_SIZE * 1.35 * forwardDir, y: 0 },
+    { x: TILE_SIZE * 1.7 * forwardDir, y: 0 },
+    { x: TILE_SIZE * 1.15 * forwardDir, y: TILE_SIZE * 0.45 },
+    { x: TILE_SIZE * 1.15 * forwardDir, y: -TILE_SIZE * 0.45 },
+  ];
+
+  for (const offset of candidateOffsets) {
+    const x = player.spawnX + offset.x;
+    const y = player.spawnY + offset.y;
+    const col = worldToGridCol(x, 0);
+    const row = worldToGridRow(y, 0);
+    if (!inBounds(col, row)) continue;
+    if (gameplayRoom.level.obstacles?.[row]?.[col]) continue;
+    const overlapsOtherPowerUp = gameplayRoom.powerUps.some((powerUp) => vectorLength(powerUp.x - x, powerUp.y - y) < TILE_SIZE * 0.7);
+    if (overlapsOtherPowerUp) continue;
+
+    gameplayRoom.powerUps.push({
+      id: `pu-missiles-${player.id}-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      type: "missiles",
+      x,
+      y,
+      spawnedAt: now,
+      expiresAt: now + POWER_DURATION_MS,
+    });
+    return true;
+  }
+
+  return false;
 }
 
 function registerOnlineKill() {
@@ -693,16 +872,15 @@ function resolveMissileStrike(strike, now = Date.now()) {
   const target = gameplayRoom.players.get(strike.targetId) || null;
   if (!target || target.isDestroyed) return false;
   if (hasActiveShield(target, now)) return false;
-  const isFriendlyFire = !!owner && owner.team === target.team;
 
   const ownerStats = ensurePlayerStats(owner, { label: owner?.label });
   const victimStats = ensurePlayerStats(target, { label: target.label });
-  if (ownerStats && !isFriendlyFire) {
+  if (ownerStats) {
     ownerStats.hits += 1;
     ownerStats.kills += 1;
   }
   if (victimStats) victimStats.deaths += 1;
-  if (!isFriendlyFire) registerOnlineKill();
+  registerOnlineKill();
   markPlayerDestroyed(target, now);
   return true;
 }
@@ -1166,14 +1344,6 @@ function broadcastLobbyList() {
       .filter((room) => room.freeSlots > 0)
       .sort((a, b) => a.createdAt - b.createdAt),
   };
-  console.log("[lobby] room_list", payload.rooms.map((room) => ({
-    id: room.id,
-    roomName: room.roomName,
-    hostName: room.hostName,
-    freeSlots: room.freeSlots,
-    playerCount: room.playerCount,
-    maxPlayers: room.maxPlayers,
-  })));
   clients.forEach((client) => {
     if (client.ws.readyState === 1) {
       client.ws.send(JSON.stringify({ type: MESSAGE.ROOM_LIST, payload }));
@@ -1616,6 +1786,7 @@ function applyRoundSideToPlayer(player) {
 }
 
 function startNewRound() {
+  const roundStartedAt = Date.now();
   gameplayRoom.roundState.currentRound += 1;
   gameplayRoom.roundState.sideSwitched = gameplayRoom.roundState.currentRound > (gameplayRoom.matchConfig?.sideSwitchAfterRound ?? Math.max(1, Math.floor(gameplayRoom.roundState.totalRounds / 2)));
   gameplayRoom.roundState.transitioning = false;
@@ -1634,6 +1805,9 @@ function startNewRound() {
     player.extraLives = Math.max(0, Number(gameplayRoom.matchConfig?.livesPerRound || 1) - 1);
     applyRoundSideToPlayer(player);
     resetPlayerForRespawn(player);
+    if (!player.isBot) {
+      spawnMissilesPowerUpForPlayer(player, roundStartedAt);
+    }
   });
 
   broadcast(MESSAGE.ROUND_START, {
@@ -1765,7 +1939,17 @@ function buildSnapshot() {
   };
 }
 
-function createPlayer(id, role, { isBot = false, label = null, aiDifficulty = DEFAULT_AI_DIFFICULTY, visualColor = RANDOM_PLAYER_COLOR } = {}) {
+function createPlayer(
+  id,
+  role,
+  {
+    isBot = false,
+    label = null,
+    aiDifficulty = DEFAULT_AI_DIFFICULTY,
+    visualColor = RANDOM_PLAYER_COLOR,
+    usedColors = new Set(),
+  } = {},
+) {
   const sideSwitched = gameplayRoom.roundState.sideSwitched;
   const effectiveTeam = getEffectiveTeam(role.id, sideSwitched);
   const spawn = getEffectiveSpawnWorld(role.id, sideSwitched);
@@ -1776,7 +1960,7 @@ function createPlayer(id, role, { isBot = false, label = null, aiDifficulty = DE
     clientId: isBot ? null : id,
     role,
     label: label || role.label,
-    visualColor: resolveVisualColor(visualColor),
+    visualColor: resolveVisualColor(visualColor, usedColors),
     colorTeam: getColorTeam(role.id),
     team: effectiveTeam,
     spawnX: spawn.x,
@@ -1855,6 +2039,7 @@ function handleJoin(clientId, ws, payload = {}) {
 
       if (gameplayRoom.pendingMatchSlots.length) {
         const takenRoleIds = new Set();
+        const takenVisualColors = new Set();
         const humanSlots = gameplayRoom.pendingMatchSlots.filter((s) => s.clientId && s.kind !== "IA");
         const botSlots = gameplayRoom.pendingMatchSlots.filter((s) => s.kind === "IA");
 
@@ -1873,7 +2058,9 @@ function handleJoin(clientId, ws, payload = {}) {
             label: slot.label || role.label,
             aiDifficulty: slot.aiDifficulty || DEFAULT_AI_DIFFICULTY,
             visualColor: slot.color || "#d8b13a",
+            usedColors: takenVisualColors,
           });
+          takenVisualColors.add(String(bot.visualColor || "").trim().toLowerCase());
           gameplayRoom.players.set(botId, bot);
           ensurePlayerStats(bot, { label: bot.label });
         });
@@ -1889,11 +2076,18 @@ function handleJoin(clientId, ws, payload = {}) {
       return;
     }
 
+    const takenVisualColors = new Set(
+      Array.from(gameplayRoom.players.values())
+        .map((player) => String(player?.visualColor || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
     const player = createPlayer(clientId, role, {
       label: mySlot?.label || role.label,
       visualColor: mySlot?.color || "#d8b13a",
+      usedColors: takenVisualColors,
     });
     gameplayRoom.players.set(clientId, player);
+    spawnMissilesPowerUpForPlayer(player);
     ensurePlayerStats(player, { label: player.label });
     ws.send(JSON.stringify({
       type: MESSAGE.WELCOME,
@@ -1915,6 +2109,7 @@ function handleJoin(clientId, ws, payload = {}) {
 function createBulletForPlayer(player) {
   const stats = ensurePlayerStats(player, { label: player.label });
   if (stats) stats.shots += 1;
+  const projectileTint = toProjectileColor(hexColorToNumber(player.visualColor, 0xd8b13a));
 
   const spawnBullet = (perpOffsetPx = 0) => {
     const perpAngle = player.turretAngleRad + Math.PI / 2;
@@ -1931,6 +2126,8 @@ function createBulletForPlayer(player) {
       bulletSpeedOverride: player.bulletSpeed ?? null,
       canDestroyStone: !!player.canDestroyStone,
     });
+    bullet.ownerTeam = player.team;
+    bullet.tint = projectileTint;
     gameplayRoom.bullets.set(bullet.id, bullet);
     player.activeBulletIds.add(bullet.id);
   };
@@ -2152,7 +2349,9 @@ function tick() {
     if ((bs.unstuckUntil || 0) > now && bs.unstuckDir) {
       player.input.moveX = bs.unstuckDir.x;
       player.input.moveY = bs.unstuckDir.y;
-      if (combatTarget && combatTargetDist <= profile.fireRange && Math.random() < profile.fireChance * 0.5) {
+      if (shouldBotFireAtObstacle(player, bs.unstuckDir, PROBE_DIST * 0.95) && Math.random() < 0.88) {
+        tryFirePlayer(player);
+      } else if (combatTarget && combatTargetDist <= profile.fireRange * 1.08 && Math.random() < Math.min(0.98, profile.fireChance * 0.72)) {
         tryFirePlayer(player);
       }
       return;
@@ -2168,6 +2367,7 @@ function tick() {
         jitteredY,
         PROBE_DIST,
         { x: bs.dirX || 0, y: bs.dirY || 0 },
+        { canDestroyStone: !!player.canDestroyStone },
       );
 
       bs.dirX = navigableDir.x;
@@ -2177,7 +2377,9 @@ function tick() {
 
     player.input.moveX = bs.dirX;
     player.input.moveY = bs.dirY;
-    if (combatTarget && combatTargetDist <= profile.fireRange && Math.random() < profile.fireChance) {
+    if (shouldBotFireAtObstacle(player, { x: bs.dirX, y: bs.dirY }, PROBE_DIST * 0.95) && Math.random() < 0.76) {
+      tryFirePlayer(player);
+    } else if (combatTarget && combatTargetDist <= profile.fireRange * 1.12 && Math.random() < Math.min(0.985, profile.fireChance * 1.12)) {
       tryFirePlayer(player);
     }
   });
@@ -2210,14 +2412,26 @@ function tick() {
     tryPickupNearbyPowerUp(player);
   });
 
-  gameplayRoom.bullets.forEach((bullet, bulletId) => {
+  const bulletEntries = Array.from(gameplayRoom.bullets.entries());
+  const bulletsToDestroy = new Set();
+  const queueBulletDestroy = (bulletId) => {
+    if (bulletId) bulletsToDestroy.add(bulletId);
+  };
+
+  bulletEntries.forEach(([bulletId, bullet]) => {
     stepBulletState(bullet, TICK_MS);
     const col = worldToGridCol(bullet.x, 0);
     const row = worldToGridRow(bullet.y, 0);
     if (isBulletOutsideBoard(bullet, { minX: MARGIN, minY: MARGIN, maxX: BOARD_WIDTH - MARGIN, maxY: BOARD_HEIGHT - MARGIN }, 0)) {
-      destroyBullet(bulletId);
+      queueBulletDestroy(bulletId);
       return;
     }
+  });
+
+  bulletEntries.forEach(([bulletId, bullet]) => {
+    if (!bullet || bulletsToDestroy.has(bulletId)) return;
+    const col = worldToGridCol(bullet.x, 0);
+    const row = worldToGridRow(bullet.y, 0);
     if (inBounds(col, row)) {
       const obstacle = gameplayRoom.level.obstacles?.[row]?.[col];
       const fortressBaseId = getFortressBaseIdAtCell(col, row);
@@ -2225,9 +2439,9 @@ function tick() {
       if (obstacle === TILE.BASE) {
         const baseId = getBaseIdAtCell(col, row);
         const base = baseId ? gameplayRoom.bases.get(baseId) : null;
-        if (base && base.hp > 0 && base.team !== bullet.ownerTeam) {
+        if (base && base.hp > 0) {
           base.hp = Math.max(0, base.hp - 1);
-          destroyBullet(bulletId);
+          queueBulletDestroy(bulletId);
           if (base.hp <= 0) {
             const owner = gameplayRoom.players.get(bullet.ownerId);
             const ownerStats = ensurePlayerStats(owner, { label: owner?.label });
@@ -2239,23 +2453,47 @@ function tick() {
           }
           return;
         }
-        destroyBullet(bulletId);
+        queueBulletDestroy(bulletId);
         return;
       }
       if (obstacle && obstacle !== TILE.WATER) {
         if (!fortressProtected && (isDestructibleTile(obstacle) || (obstacle === TILE.STEEL && bullet.canDestroyStone))) {
           gameplayRoom.level.obstacles[row][col] = null;
         }
-        destroyBullet(bulletId);
+        queueBulletDestroy(bulletId);
         return;
       }
     }
+  });
 
+  for (let i = 0; i < bulletEntries.length; i += 1) {
+    const [bulletId, bullet] = bulletEntries[i];
+    if (!bullet || bulletsToDestroy.has(bulletId)) continue;
+    for (let j = i + 1; j < bulletEntries.length; j += 1) {
+      const [otherId, otherBullet] = bulletEntries[j];
+      if (
+        !otherBullet ||
+        bulletsToDestroy.has(otherId) ||
+        bullet.ownerTeam === otherBullet.ownerTeam
+      ) {
+        continue;
+      }
+      const combinedRadius = (bullet.hitRadius || 0) + (otherBullet.hitRadius || 0);
+      if (vectorLength(bullet.x - otherBullet.x, bullet.y - otherBullet.y) <= combinedRadius) {
+        queueBulletDestroy(bulletId);
+        queueBulletDestroy(otherId);
+        break;
+      }
+    }
+  }
+
+  bulletEntries.forEach(([bulletId, bullet]) => {
+    if (!bullet || bulletsToDestroy.has(bulletId)) return;
     for (const base of gameplayRoom.bases.values()) {
-      if (base.hp <= 0 || base.team === bullet.ownerTeam) continue;
+      if (base.hp <= 0) continue;
       if (vectorLength(bullet.x - base.x, bullet.y - base.y) <= (base.radius || 54) + (bullet.hitRadius || 0)) {
         base.hp = Math.max(0, base.hp - 1);
-        destroyBullet(bulletId);
+        queueBulletDestroy(bulletId);
         if (base.hp <= 0) {
           const owner = gameplayRoom.players.get(bullet.ownerId);
           const ownerStats = ensurePlayerStats(owner, { label: owner?.label });
@@ -2270,28 +2508,29 @@ function tick() {
     }
 
     for (const player of gameplayRoom.players.values()) {
-      if (!player || player.isDestroyed || player.id === bullet.ownerId || player.team === bullet.ownerTeam) continue;
+      if (!player || player.isDestroyed || player.id === bullet.ownerId) continue;
       if (vectorLength(bullet.x - player.x, bullet.y - player.y) <= TANK_HIT_RADIUS + (bullet.hitRadius || 0)) {
         if (hasActiveShield(player, now)) {
-          destroyBullet(bulletId);
+          queueBulletDestroy(bulletId);
           return;
         }
         const owner = gameplayRoom.players.get(bullet.ownerId);
-        const isFriendlyFire = !!owner && owner.team === player.team;
         const ownerStats = ensurePlayerStats(owner, { label: owner?.label });
         const victimStats = ensurePlayerStats(player, { label: player.label });
-        if (ownerStats && !isFriendlyFire) {
+        if (ownerStats) {
           ownerStats.hits += 1;
           ownerStats.kills += 1;
         }
         if (victimStats) victimStats.deaths += 1;
-        if (!isFriendlyFire) registerOnlineKill();
+        registerOnlineKill();
         markPlayerDestroyed(player, now);
-        destroyBullet(bulletId);
+        queueBulletDestroy(bulletId);
         return;
       }
     }
   });
+
+  bulletsToDestroy.forEach((bulletId) => destroyBullet(bulletId));
 
   broadcast(MESSAGE.SNAPSHOT, buildSnapshot());
 }
@@ -2336,11 +2575,6 @@ wss.on("connection", (ws) => {
           updateLobbyRoom(clientId, message.payload || {});
           break;
         case MESSAGE.LIST_ROOMS:
-          console.log("[lobby] list_rooms request", {
-            clientId,
-            roomId: message.payload?.roomId || null,
-            currentLobbyRoomId: client?.currentLobbyRoomId || null,
-          });
           if (message.payload?.roomId) requestRoomDetail(clientId, message.payload);
           else sendToClient(clientId, MESSAGE.ROOM_LIST, {
             rooms: Array.from(lobbyRooms.values()).map(lobbyRoomToSummary).filter((room) => room.freeSlots > 0),
