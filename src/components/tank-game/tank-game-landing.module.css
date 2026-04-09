@@ -593,18 +593,38 @@
   max-width: 72%;
   padding: 0.28rem 0.5rem;
   position: absolute;
+  border-radius: 0.3rem;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
   z-index: 4;
+}
+
+.roomFooterTextInfo {
+  background: linear-gradient(180deg, rgba(102, 176, 214, 0.94), rgba(60, 132, 173, 0.96));
+  border: 1px solid rgba(214, 242, 255, 0.74);
+  box-shadow: 0 6px 18px rgba(28, 79, 110, 0.24);
+  color: #f4fbff;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-shadow: none;
 }
 
 .roomFooterTextError {
   background: linear-gradient(180deg, rgba(107, 15, 15, 0.94), rgba(61, 7, 7, 0.96));
   border: 1px solid rgba(255, 184, 184, 0.72);
-  border-radius: 0.3rem;
   box-shadow: 0 6px 18px rgba(45, 5, 5, 0.34);
   color: #fff2f2;
   font-weight: 700;
   letter-spacing: 0.02em;
+  text-shadow: none;
+}
+
+.roomFooterTextCountdown {
+  background: linear-gradient(180deg, rgba(56, 147, 82, 0.95), rgba(33, 106, 56, 0.98));
+  border: 1px solid rgba(206, 255, 205, 0.72);
+  box-shadow: 0 6px 18px rgba(16, 78, 33, 0.28);
+  color: #f2fff1;
+  font-weight: 800;
+  letter-spacing: 0.03em;
   text-shadow: none;
 }
 
@@ -672,12 +692,4 @@
   background: #2f8e3d;
   color: #ffffff;
   cursor: pointer;
-}
-
-.countdownText {
-  color: #2f8e3d;
-  font-family: "Courier New", Courier, monospace;
-  font-size: clamp(0.56rem, 0.64vw, 0.78rem);
-  font-weight: 800;
-  text-align: center;
 }

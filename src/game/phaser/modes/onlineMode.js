@@ -238,7 +238,7 @@ function buildOnlineOverlay(scene) {
     : null;
   const summary = snapshot?.matchSummary || null;
   const wantsStatsPanel = scene.keys.tab?.isDown || scene.readPadButtonPressed(8, 0.35, 0);
-  const summaryVisible = !!summary && (!!roundState?.matchOver || wantsStatsPanel);
+  const summaryVisible = !!summary && (!!roundState?.matchOver || !!roundState?.showPartialSummary || wantsStatsPanel);
   const summaryData = summaryVisible ? formatOverlaySummary(summary, !!roundState?.matchOver) : null;
 
   return {

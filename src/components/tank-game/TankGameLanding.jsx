@@ -174,10 +174,11 @@ const AI_DIFFICULTY_OPTIONS = ["Facil", "Normal", "Dificil", "Massacre"];
 const DEFAULT_PLAYER_COLOR = "#d8b13a";
 const RANDOM_PLAYER_COLOR = "Azar";
 const COLOR_PALETTE = [
-  "#f4c430", "#ffd166", "#ff9f1c", "#ff7f50", "#ef476f", "#c1121f",
-  "#ff66c4", "#b5179e", "#7b2cbf", "#4361ee", "#3a86ff", "#4cc9f0",
-  "#00bcd4", "#06d6a0", "#2dc653", "#8ac926", "#c0ca33", "#a47148",
-  "#c2b280", "#f5f5f5", "#9aa0a6", "#6b7280", "#374151", "#111827",
+  "#f4c430", "#00bcd4", "#ef476f", "#8ac926", "#7b2cbf", "#c2b280",
+  "#3a86ff", "#ff9f1c", "#06d6a0", "#c1121f", "#f5f5f5", "#a47148",
+  "#ff66c4", "#2dc653", "#4361ee", "#ffd166", "#6b7280", "#00a6fb",
+  "#b5179e", "#c0ca33", "#ff7f50", "#111827", "#4cc9f0", "#e11d48",
+  "#374151", "#39d353", "#ffb703", "#14b8a6", "#8b5cf6",
 ];
 const ALLOWED_PLAYER_COLORS = new Set(COLOR_PALETTE);
 const UNASSIGNED_TEAM = "-";
@@ -1165,6 +1166,10 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
   const effectiveIsLocalHost = localSlot ? !!localSlot.isHost : isLocalHost;
   const effectiveIsHostReady = localSlot ? !!localSlot.isReady : isHostReady;
   const isVisibleErrorStatus = statusIsError || /no se pudo conectar|error|no se pudo/i.test(String(statusText || ""));
+  const footerText = countdown != null ? `Inicia en ${countdown}...` : statusText;
+  const footerStatusClassName = countdown != null
+    ? styles.roomFooterTextCountdown
+    : (isVisibleErrorStatus ? styles.roomFooterTextError : styles.roomFooterTextInfo);
   const allHumansReady = useMemo(() => {
     const humans = slots.filter((slot) => slot.clientId);
     return humans.length > 0 && humans.every((slot) => slot.isReady);
@@ -1296,7 +1301,6 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
                     {effectiveIsLocalHost && (
                       <button className={`${styles.startMatchButton} ${canStartMatch ? styles.startMatchButtonReady : ""}`} onClick={launchOnlineMatch} type="button">COMENZAR PARTIDA</button>
                     )}
-                    {countdown != null ? <div className={styles.countdownText}>Inicia en {countdown}...</div> : null}
                   </div>
                   <InlineSetting label="Nombre sala"><input className={styles.textField} disabled={!effectiveIsLocalHost} maxLength={30} onChange={(event) => setRoomName(event.target.value)} placeholder="Sala de Player1" type="text" value={roomName} /></InlineSetting>
                   <InlineSetting label="Densidad"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setDensity(event.target.value)} value={density}>{DENSITY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
@@ -1366,7 +1370,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
             <button className={styles.sendButton} type="submit">Enviar</button>
           </form>
 
-          <div className={`${styles.roomFooterText}${isVisibleErrorStatus ? ` ${styles.roomFooterTextError}` : ""}`}>{statusText}</div>
+          <div className={`${styles.roomFooterText} ${footerStatusClassName}`}>{footerText}</div>
         </div>
       </div>
     </div>

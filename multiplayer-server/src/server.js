@@ -19,6 +19,7 @@ const MAX_BULLETS_PER_PLAYER = 1;
 const TOTAL_ROUNDS = 6;
 const SIDE_SWITCH_AFTER_ROUND = Math.max(1, Math.floor(TOTAL_ROUNDS / 2));
 const ROUND_TRANSITION_MS = 3500;
+const SIDE_SWITCH_PARTIAL_SUMMARY_MS = 3000;
 const RESPAWN_DELAY_MS = 2000;
 const SPAWN_SHIELD_DURATION_MS = 3000;
 const BASE_HP_PER_ROUND = 1;
@@ -36,10 +37,11 @@ const MAX_HOSTED_ROOMS_PER_IP = 2;
 const DEFAULT_AI_DIFFICULTY = "Normal";
 const RANDOM_PLAYER_COLOR = "Azar";
 const RANDOM_COLOR_POOL = [
-  "#f4c430", "#ffd166", "#ff9f1c", "#ff7f50", "#ef476f", "#c1121f",
-  "#ff66c4", "#b5179e", "#7b2cbf", "#4361ee", "#3a86ff", "#4cc9f0",
-  "#00bcd4", "#06d6a0", "#2dc653", "#8ac926", "#c0ca33", "#a47148",
-  "#c2b280", "#f5f5f5", "#9aa0a6", "#6b7280", "#374151", "#111827",
+  "#f4c430", "#00bcd4", "#ef476f", "#8ac926", "#7b2cbf", "#c2b280",
+  "#3a86ff", "#ff9f1c", "#06d6a0", "#c1121f", "#f5f5f5", "#a47148",
+  "#ff66c4", "#2dc653", "#4361ee", "#ffd166", "#6b7280", "#00a6fb",
+  "#b5179e", "#c0ca33", "#ff7f50", "#111827", "#4cc9f0", "#e11d48",
+  "#374151", "#39d353", "#ffb703", "#14b8a6", "#8b5cf6",
 ];
 const ALLOWED_PLAYER_COLORS = new Set(RANDOM_COLOR_POOL);
 const AI_CELEBRITY_NAMES = [
@@ -286,6 +288,8 @@ function createRoundState(matchConfig = createDefaultMatchConfig()) {
     sideSwitched: false,
     transitioning: false,
     transitionAt: null,
+    transitionDurationMs: ROUND_TRANSITION_MS,
+    showPartialSummary: false,
     matchOver: false,
     matchWinner: null,
   };
@@ -446,7 +450,29 @@ function pickRandomAvailableColor(usedColors = new Set()) {
   );
   const availableColors = RANDOM_COLOR_POOL.filter((color) => !normalizedUsed.has(color));
   const pool = availableColors.length ? availableColors : RANDOM_COLOR_POOL;
-  return pool[Math.floor(Math.random() * pool.length)] || "#f4c430";
+  const usedPaletteColors = RANDOM_COLOR_POOL.filter((color) => normalizedUsed.has(color));
+  if (!usedPaletteColors.length) {
+    return pool[Math.floor(Math.random() * pool.length)] || "#f4c430";
+  }
+
+  let bestScore = -1;
+  let bestColors = [];
+  pool.forEach((candidate) => {
+    const minDistance = usedPaletteColors.reduce((min, usedColor) => (
+      Math.min(min, getPaletteColorDistance(candidate, usedColor))
+    ), Number.POSITIVE_INFINITY);
+    if (minDistance > bestScore + 0.0001) {
+      bestScore = minDistance;
+      bestColors = [candidate];
+      return;
+    }
+    if (Math.abs(minDistance - bestScore) <= 0.0001) {
+      bestColors.push(candidate);
+    }
+  });
+
+  const bestPool = bestColors.length ? bestColors : pool;
+  return bestPool[Math.floor(Math.random() * bestPool.length)] || "#f4c430";
 }
 
 function resolveVisualColor(value, usedColors = new Set()) {
@@ -510,6 +536,23 @@ function rgbToHsv(r, g, b) {
   const s = max === 0 ? 0 : delta / max;
   const v = max;
   return { h, s, v };
+}
+
+function getPaletteColorDistance(colorA, colorB) {
+  const rgbA = colorToRgb(hexColorToNumber(colorA));
+  const rgbB = colorToRgb(hexColorToNumber(colorB));
+  const hsvA = rgbToHsv(rgbA.r, rgbA.g, rgbA.b);
+  const hsvB = rgbToHsv(rgbB.r, rgbB.g, rgbB.b);
+  const hueDiffRaw = Math.abs(hsvA.h - hsvB.h);
+  const hueDiff = Math.min(hueDiffRaw, 360 - hueDiffRaw) / 180;
+  const satDiff = Math.abs(hsvA.s - hsvB.s);
+  const valDiff = Math.abs(hsvA.v - hsvB.v);
+  const rgbDistance = Math.sqrt(
+    ((rgbA.r - rgbB.r) ** 2) +
+    ((rgbA.g - rgbB.g) ** 2) +
+    ((rgbA.b - rgbB.b) ** 2),
+  ) / 441.67295593;
+  return (rgbDistance * 0.55) + (hueDiff * 0.25) + (satDiff * 0.12) + (valDiff * 0.08);
 }
 
 function hsvToRgb(h, s, v) {
@@ -932,6 +975,7 @@ function markPlayerDestroyed(player, now = Date.now()) {
   player.input = { moveX: 0, moveY: 0, aimX: 0, aimY: 0, fire: false };
   player.activeBulletIds?.forEach((bulletId) => destroyBullet(bulletId));
   player.activeBulletIds = new Set();
+  resetPlayerUpgradeState(player);
   player.isDestroyed = true;
   player.shieldUntil = 0;
   player.shieldFlickerOnExpire = false;
@@ -1813,10 +1857,14 @@ function applyRoundSideToPlayer(player) {
 
 function startNewRound() {
   const roundStartedAt = Date.now();
+  const previousSideSwitched = !!gameplayRoom.roundState.sideSwitched;
   gameplayRoom.roundState.currentRound += 1;
   gameplayRoom.roundState.sideSwitched = gameplayRoom.roundState.currentRound > (gameplayRoom.matchConfig?.sideSwitchAfterRound ?? Math.max(1, Math.floor(gameplayRoom.roundState.totalRounds / 2)));
+  const sideSwitchChanged = gameplayRoom.roundState.sideSwitched !== previousSideSwitched;
   gameplayRoom.roundState.transitioning = false;
   gameplayRoom.roundState.transitionAt = null;
+  gameplayRoom.roundState.transitionDurationMs = ROUND_TRANSITION_MS;
+  gameplayRoom.roundState.showPartialSummary = false;
   gameplayRoom.status.winnerTeam = null;
   gameplayRoom.level = createOnline2v2Level(gameplayRoom.matchConfig);
   gameplayRoom.bases = createFreshBases(gameplayRoom.matchConfig?.baseHpPerRound);
@@ -1831,6 +1879,9 @@ function startNewRound() {
     player.activeBulletIds = new Set();
     player.extraLives = Math.max(0, Number(gameplayRoom.matchConfig?.livesPerRound || 1) - 1);
     applyRoundSideToPlayer(player);
+    if (sideSwitchChanged) {
+      resetPlayerUpgradeState(player);
+    }
     resetPlayerForRespawn(player);
     if (!player.isBot) {
       spawnMissilesPowerUpForPlayer(player, roundStartedAt);
@@ -1957,6 +2008,9 @@ function buildSnapshot() {
       scores: { ...gameplayRoom.roundState.scores },
       sideSwitched: gameplayRoom.roundState.sideSwitched,
       transitioning: gameplayRoom.roundState.transitioning,
+      transitionAt: gameplayRoom.roundState.transitionAt,
+      transitionDurationMs: gameplayRoom.roundState.transitionDurationMs,
+      showPartialSummary: gameplayRoom.roundState.showPartialSummary,
       matchOver: gameplayRoom.roundState.matchOver,
       matchWinner: gameplayRoom.roundState.matchWinner,
       sideSwitchAfterRound: gameplayRoom.matchConfig?.sideSwitchAfterRound ?? Math.max(1, Math.floor(gameplayRoom.roundState.totalRounds / 2)),
@@ -2206,7 +2260,6 @@ function updateRespawns(now) {
   gameplayRoom.players.forEach((player) => {
     if (!player || !player.isDestroyed || !player.respawnAt) return;
     if (now < player.respawnAt) return;
-    resetPlayerUpgradeState(player);
     resetPlayerForRespawn(player);
   });
 }
@@ -2257,12 +2310,13 @@ function tick() {
 
   if (gameplayRoom.roundState.transitioning) {
     const elapsed = now - gameplayRoom.roundState.transitionAt;
-    if (elapsed >= ROUND_TRANSITION_MS) {
+    if (elapsed >= Number(gameplayRoom.roundState.transitionDurationMs || ROUND_TRANSITION_MS)) {
       const winner = getMatchWinner();
       if (winner) {
         gameplayRoom.roundState.matchOver = true;
         gameplayRoom.roundState.matchWinner = winner;
         gameplayRoom.roundState.transitioning = false;
+        gameplayRoom.roundState.showPartialSummary = false;
       } else {
         startNewRound();
       }
@@ -2281,8 +2335,13 @@ function tick() {
       gameplayRoom.roundState.matchOver = true;
       gameplayRoom.roundState.matchWinner = matchWinner;
     } else {
+      const nextRound = gameplayRoom.roundState.currentRound + 1;
+      const nextRoundSideSwitched = nextRound > (gameplayRoom.matchConfig?.sideSwitchAfterRound ?? Math.max(1, Math.floor(gameplayRoom.roundState.totalRounds / 2)));
+      const sideSwitchIncoming = nextRoundSideSwitched !== !!gameplayRoom.roundState.sideSwitched;
       gameplayRoom.roundState.transitioning = true;
       gameplayRoom.roundState.transitionAt = now;
+      gameplayRoom.roundState.transitionDurationMs = sideSwitchIncoming ? SIDE_SWITCH_PARTIAL_SUMMARY_MS : ROUND_TRANSITION_MS;
+      gameplayRoom.roundState.showPartialSummary = sideSwitchIncoming;
     }
     broadcast(MESSAGE.SNAPSHOT, buildSnapshot());
     return;
