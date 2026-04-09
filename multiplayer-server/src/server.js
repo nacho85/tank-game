@@ -25,6 +25,7 @@ const BASE_HP_PER_ROUND = 1;
 const MISSILE_STRIKE_SPEED = 640;
 const MISSILE_STRIKE_MIN_MS = 260;
 const MISSILE_STRIKE_MAX_MS = 1200;
+const MISSILE_IMPACT_EFFECT_MS = 180;
 const POWER_DURATION_MS = 12000;
 const POWER_FLICKER_AT_MS = 2000;
 const POWER_FLICKER_STEP_MS = 200;
@@ -300,6 +301,7 @@ const legacyGameplayRoom = {
   playerStats: new Map(),
   powerUps: [],                  // power-ups activos en el mapa
   activeMissileStrikes: [],
+  missileImpactEffects: [],
   baseFortressEffects: new Map(),
   teamFreezeEffects: new Map(),
   totalKillsLifetime: 0,         // bajas acumuladas en toda la partida
@@ -327,6 +329,7 @@ function createGameplayRoom(roomId, matchConfig = null) {
     playerStats: new Map(),
     powerUps: [],
     activeMissileStrikes: [],
+    missileImpactEffects: [],
     baseFortressEffects: new Map(),
     teamFreezeEffects: new Map(),
     totalKillsLifetime: 0,
@@ -397,6 +400,7 @@ function resetGameplayRoomState(matchConfig = null) {
   gameplayRoom.playerStats.clear();
   gameplayRoom.powerUps = [];
   gameplayRoom.activeMissileStrikes = [];
+  gameplayRoom.missileImpactEffects = [];
   gameplayRoom.baseFortressEffects.clear();
   gameplayRoom.teamFreezeEffects.clear();
   gameplayRoom.totalKillsLifetime = 0;
@@ -537,8 +541,11 @@ function toProjectileColor(color) {
 
   if (v < 0.18) return 0x050505;
   if (v < 0.32 && s < 0.28) return 0x101010;
-  if (s < 0.12 && v > 0.82) return 0xf5f5f5;
-  if (s < 0.18 && v <= 0.82) return 0xbfc7d5;
+  if (s < 0.12 && v > 0.82) return 0xd9d9d9;
+  if (s < 0.22) {
+    const gray = Math.max(0x22, Math.min(0xc8, Math.round(v * 255)));
+    return rgbToColor(gray, gray, gray);
+  }
 
   if (h < 15 || h >= 345) return 0xff3b30;
   if (h < 35) return 0xff7a00;
@@ -883,6 +890,20 @@ function resolveMissileStrike(strike, now = Date.now()) {
   registerOnlineKill();
   markPlayerDestroyed(target, now);
   return true;
+}
+
+function registerMissileImpactEffect(strike, x, y, now = Date.now()) {
+  if (!strike) return;
+  gameplayRoom.missileImpactEffects.push({
+    id: `ms-impact-${strike.id}-${now}`,
+    strikeId: strike.id,
+    ownerId: strike.ownerId,
+    targetId: strike.targetId,
+    x: Number(x || 0),
+    y: Number(y || 0),
+    createdAt: now,
+    expiresAt: now + MISSILE_IMPACT_EFFECT_MS,
+  });
 }
 
 function applyOnlineMissilesEffect(player) {
@@ -1797,6 +1818,7 @@ function startNewRound() {
   gameplayRoom.bullets.clear();
   gameplayRoom.powerUps = [];
   gameplayRoom.activeMissileStrikes = [];
+  gameplayRoom.missileImpactEffects = [];
   gameplayRoom.baseFortressEffects.clear();
   gameplayRoom.teamFreezeEffects.clear();
 
@@ -1914,6 +1936,7 @@ function buildSnapshot() {
       tint: bullet.tint,
     })),
     activeMissileStrikes: gameplayRoom.activeMissileStrikes.map((strike) => ({ ...strike })),
+    missileImpactEffects: gameplayRoom.missileImpactEffects.map((effect) => ({ ...effect })),
     bases: Array.from(gameplayRoom.bases.values()).map((base) => ({ ...base })),
     powerUps: gameplayRoom.powerUps.map((pu) => ({ ...pu })),
     floor: gameplayRoom.level.floor,
@@ -2200,6 +2223,7 @@ function updateMissileStrikes(now) {
     if (dist <= 24 || now >= Number(strike.hitAt || 0)) {
       strike.x = target.x;
       strike.y = target.y;
+      registerMissileImpactEffect(strike, target.x, target.y, now);
       resolveMissileStrike(strike, now);
       return;
     }
@@ -2210,6 +2234,7 @@ function updateMissileStrikes(now) {
     remaining.push(strike);
   });
   gameplayRoom.activeMissileStrikes = remaining;
+  gameplayRoom.missileImpactEffects = (gameplayRoom.missileImpactEffects || []).filter((effect) => Number(effect?.expiresAt || 0) > now);
 }
 
 function tick() {

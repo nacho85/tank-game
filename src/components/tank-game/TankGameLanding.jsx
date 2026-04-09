@@ -174,11 +174,12 @@ const AI_DIFFICULTY_OPTIONS = ["Facil", "Normal", "Dificil", "Massacre"];
 const DEFAULT_PLAYER_COLOR = "#d8b13a";
 const RANDOM_PLAYER_COLOR = "Azar";
 const COLOR_PALETTE = [
-  "#d8b13a", "#f1c85c", "#f28b50", "#d4675f", "#b64a44", "#8d3d3d",
-  "#c96f96", "#a95bd4", "#6d78e0", "#436dad", "#5ca9ff", "#4db9bf",
-  "#49a87b", "#5f9b5b", "#7db55c", "#93c75d", "#d4d97a", "#9f8b6b",
-  "#cfc6b8", "#ffffff", "#7c7c7c", "#3f3f46", "#1f1f23", "#111827",
+  "#f4c430", "#ffd166", "#ff9f1c", "#ff7f50", "#ef476f", "#c1121f",
+  "#ff66c4", "#b5179e", "#7b2cbf", "#4361ee", "#3a86ff", "#4cc9f0",
+  "#00bcd4", "#06d6a0", "#2dc653", "#8ac926", "#c0ca33", "#a47148",
+  "#c2b280", "#f5f5f5", "#9aa0a6", "#6b7280", "#374151", "#111827",
 ];
+const ALLOWED_PLAYER_COLORS = new Set(COLOR_PALETTE);
 const UNASSIGNED_TEAM = "-";
 const TEAM_ONE = "1";
 const TEAM_TWO = "2";
@@ -458,7 +459,8 @@ function getColorOption(colorName) {
 function normalizeCustomColor(value) {
   const normalized = String(value || "").trim();
   if (normalized === RANDOM_PLAYER_COLOR) return RANDOM_PLAYER_COLOR;
-  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : DEFAULT_PLAYER_COLOR;
+  const hexValue = /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : DEFAULT_PLAYER_COLOR;
+  return ALLOWED_PLAYER_COLORS.has(hexValue) ? hexValue : DEFAULT_PLAYER_COLOR;
 }
 
 function getSocketUrl() {
@@ -667,15 +669,6 @@ function ColorPicker({ disabled = false, value, onChange, open, onToggle, onClos
               <span className={styles.visuallyHidden}>{option}</span>
             </button>
           ))}
-          <label className={styles.colorPaletteCustom}>
-            <span className={styles.colorPaletteCustomLabel}>Mas</span>
-            <input
-              className={styles.colorPaletteNative}
-              onChange={(event) => onChange(normalizeCustomColor(event.target.value))}
-              type="color"
-              value={normalizedValue}
-            />
-          </label>
         </div>
       ) : null}
     </div>

@@ -95,7 +95,7 @@ export function getEnemySpawnVariant(scene) {
       enemyClass: "tankette",
       bodyKey: "enemy-tankette-body",
       turretKey: "enemy-tankette-turret",
-      moveSpeed: Math.max(120, Number(scene.settings?.enemyTanketteSpeed || 165)),
+      moveSpeed: Math.max(120, Number(scene.settings?.enemyTanketteSpeed || 250)),
       bodyMaxFactor: 1.02,
       turretMaxFactor: 0.95,
       turretScaleX: 0.6,

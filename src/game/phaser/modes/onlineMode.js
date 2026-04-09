@@ -1,3 +1,4 @@
+import * as Phaser from "phaser";
 import { BOARD_HEIGHT, BOARD_WIDTH, ENEMY_BODY_BASE_FACING_DEG, ENEMY_TURRET_BASE_FACING_RAD, MACRO_TILE_SIZE, PLAYER_BODY_BASE_FACING_DEG, PLAYER_BODY_RING_CENTER, PLAYER_TURRET_BASE_FACING_RAD, PLAYER_TURRET_CAP_CENTER, TANK_RENDER_SIZE, TILE_SIZE } from "../shared/constants";
 import { vectorLength } from "../shared/math";
 import { POWER_TYPE } from "../systems/powerUpSystem";
@@ -19,12 +20,115 @@ const ONLINE_PLAYER_SPRITE_OPTIONS = {
   turretPivotPx: PLAYER_TURRET_CAP_CENTER,
 };
 
+const ONLINE_MISSILE_VISUAL_SPEED = 640;
+const ONLINE_MISSILE_VISUAL_MIN_MS = 260;
+const ONLINE_MISSILE_VISUAL_MAX_MS = 1200;
+const ONLINE_MISSILE_OPTIMISTIC_LEAD_MS = 120;
+const ONLINE_MISSILE_DESPAWN_GRACE_MS = 120;
+const ONLINE_MISSILE_RENDER_LEAD_MS = 12;
+
 function parseTintColor(value, fallback = 0xd8b13a) {
   const normalized = String(value || "").trim();
   if (/^#[0-9a-f]{6}$/i.test(normalized)) {
     return Number.parseInt(normalized.slice(1), 16);
   }
   return fallback;
+}
+
+function brightenTint(tint, amount = 0.35) {
+  const base = Number(tint || 0);
+  const r = (base >> 16) & 0xff;
+  const g = (base >> 8) & 0xff;
+  const b = base & 0xff;
+  const nextR = Math.round(r + ((0xff - r) * amount));
+  const nextG = Math.round(g + ((0xff - g) * amount));
+  const nextB = Math.round(b + ((0xff - b) * amount));
+  return (nextR << 16) | (nextG << 8) | nextB;
+}
+
+function darkenTint(tint, amount = 0.18) {
+  const base = Number(tint || 0);
+  const factor = Math.max(0, 1 - amount);
+  const r = Math.round(((base >> 16) & 0xff) * factor);
+  const g = Math.round(((base >> 8) & 0xff) * factor);
+  const b = Math.round((base & 0xff) * factor);
+  return (r << 16) | (g << 8) | b;
+}
+
+function drawBulletShape(graphics, width, length, fillColor, alpha = 1) {
+  if (!graphics?.clear) return;
+  const w = Math.max(4, Number(width || 0));
+  const h = Math.max(10, Number(length || 0));
+  const halfW = w / 2;
+  const noseY = -(h / 2);
+  const shoulderY = -(h * 0.16);
+  const tailY = h / 2;
+  const tailInsetY = h * 0.22;
+
+  graphics.clear();
+  graphics.fillStyle(fillColor, alpha);
+  graphics.beginPath();
+  graphics.moveTo(0, noseY);
+  graphics.lineTo(halfW, shoulderY);
+  graphics.lineTo(halfW, tailInsetY);
+  graphics.lineTo(halfW * 0.72, tailY);
+  graphics.lineTo(-(halfW * 0.72), tailY);
+  graphics.lineTo(-halfW, tailInsetY);
+  graphics.lineTo(-halfW, shoulderY);
+  graphics.closePath();
+  graphics.fillPath();
+}
+
+function getOnlineMissilePairKey(ownerId, targetId) {
+  return `${String(ownerId || "")}:${String(targetId || "")}`;
+}
+
+function estimateOnlineMissileDurationMs(fromX, fromY, toX, toY) {
+  const distance = vectorLength(Number(toX || 0) - Number(fromX || 0), Number(toY || 0) - Number(fromY || 0));
+  return Math.max(
+    ONLINE_MISSILE_VISUAL_MIN_MS,
+    Math.min(ONLINE_MISSILE_VISUAL_MAX_MS, Math.round((distance / ONLINE_MISSILE_VISUAL_SPEED) * 1000)),
+  );
+}
+
+function forgetOptimisticOnlineMissile(state, missile) {
+  if (!state?.onlineOptimisticMissileIdsByKey || !missile) return;
+  const pairKey = missile.pairKey || getOnlineMissilePairKey(missile.ownerId, missile.targetId);
+  if (!pairKey) return;
+  if (state.onlineOptimisticMissileIdsByKey[pairKey] === missile.id) {
+    delete state.onlineOptimisticMissileIdsByKey[pairKey];
+  }
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value || 0)));
+}
+
+function getEstimatedOnlineServerNow(state, now = Date.now()) {
+  const serverClockOffsetMs = Number(state?.serverClockOffsetMs || 0);
+  const snapshotLatencyMs = Number(state?.snapshotLatencyMs || 0);
+  return now - serverClockOffsetMs + snapshotLatencyMs + ONLINE_MISSILE_RENDER_LEAD_MS;
+}
+
+function getOnlineMissileTargetWorld(scene, missile) {
+  const targetVisual = missile?.targetId ? scene.onlineState?.remoteTanksById?.[missile.targetId] : null;
+  if (targetVisual?.container?.active && !targetVisual.isDestroyed) {
+    return {
+      x: Number(targetVisual.x || 0) - scene.boardOriginX,
+      y: Number(targetVisual.y || 0) - scene.boardOriginY,
+    };
+  }
+  const targetState = missile?.targetId ? scene.matchState?.tanksById?.[missile.targetId] : null;
+  if (targetState && !targetState.isDestroyed) {
+    return {
+      x: Number(targetState.x || 0),
+      y: Number(targetState.y || 0),
+    };
+  }
+  return {
+    x: Number(missile?.endServerX || missile?.startServerX || 0),
+    y: Number(missile?.endServerY || missile?.startServerY || 0),
+  };
 }
 
 function lerpChannel(from, to, t) {
@@ -186,30 +290,58 @@ function destroyRemoteTankVisual(tank) {
 }
 
 function destroyRemoteBulletVisual(bullet) {
-  bullet?.sprite?.destroy?.();
+  bullet?.glow?.destroy?.();
+  bullet?.body?.destroy?.();
+  bullet?.core?.destroy?.();
 }
 
 function destroyOnlineMissileVisual(missile) {
   missile?.smokeTimer?.remove?.(false);
-  missile?.sprite?.destroy?.();
+  missile?.glow?.destroy?.();
+  missile?.body?.destroy?.();
+  missile?.core?.destroy?.();
 }
 
 function createRemoteBulletVisual(scene, remoteBullet) {
-  const sprite = scene.add
-    .image(scene.boardOriginX + remoteBullet.x, scene.boardOriginY + remoteBullet.y, "tank-projectile")
-    .setDepth(180)
-    .setDisplaySize(remoteBullet.width || 11, remoteBullet.length || 24)
-    .setRotation((remoteBullet.angleRad || 0) + Math.PI / 2)
-    .setAlpha(0.98)
-    .setTint(remoteBullet.tint || 0xfff3a8);
-  scene.entityLayer.add(sprite);
+  const bulletTint = Number(remoteBullet.tint || 0xfff3a8);
+  const shellTint = darkenTint(bulletTint, 0.22);
+  const outerGasTint = darkenTint(bulletTint, 0.12);
+  const innerGasTint = brightenTint(bulletTint, 0.03);
+  const coreTint = brightenTint(bulletTint, 0.08);
+  const width = remoteBullet.width || 11;
+  const length = remoteBullet.length || 24;
+  const x = scene.boardOriginX + remoteBullet.x;
+  const y = scene.boardOriginY + remoteBullet.y;
+  const glow = scene.add.graphics().setDepth(178);
+  const body = scene.add.graphics().setDepth(179);
+  const core = scene.add.graphics().setDepth(180);
+  drawBulletShape(glow, Math.max(6, width * 0.88), Math.max(12, length * 0.8), shellTint, 1);
+  drawBulletShape(body, Math.max(6, width * 0.9), Math.max(13, length * 0.84), shellTint, 1);
+  drawBulletShape(body, Math.max(5, width * 0.8), Math.max(11, length * 0.76), outerGasTint, 1);
+  drawBulletShape(body, Math.max(4, width * 0.68), Math.max(9, length * 0.64), innerGasTint, 1);
+  drawBulletShape(core, Math.max(2, width * 0.22), Math.max(4, length * 0.24), coreTint, 1);
+  glow.x = x;
+  glow.y = y;
+  body.x = x;
+  body.y = y;
+  core.x = x;
+  core.y = y;
+  const rotation = (remoteBullet.angleRad || 0) + Math.PI / 2;
+  glow.rotation = rotation;
+  body.rotation = rotation;
+  core.rotation = rotation;
+  scene.entityLayer.add(glow);
+  scene.entityLayer.add(body);
+  scene.entityLayer.add(core);
   return {
     id: remoteBullet.id,
-    sprite,
-    x: sprite.x,
-    y: sprite.y,
-    targetX: sprite.x,
-    targetY: sprite.y,
+    glow,
+    body,
+    core,
+    x,
+    y,
+    targetX: x,
+    targetY: y,
     angleRad: remoteBullet.angleRad || 0,
     targetAngleRad: remoteBullet.angleRad || 0,
   };
@@ -218,30 +350,66 @@ function createRemoteBulletVisual(scene, remoteBullet) {
 function createOnlineMissileVisual(scene, strike) {
   const startX = scene.boardOriginX + Number(strike.x || 0);
   const startY = scene.boardOriginY + Number(strike.y || 0);
-  const sprite = scene.add
-    .image(startX, startY, "tank-projectile")
-    .setDisplaySize(10, 28)
-    .setRotation((Number(strike.angleRad || 0)) + Math.PI / 2)
-    .setTint(0xff6600)
-    .setDepth(190);
-  scene.entityLayer.add(sprite);
+  const missileTint = 0xa81818;
+  const glowTint = 0x8a1414;
+  const coreTint = 0xc22626;
+  const glow = scene.add.graphics().setDepth(188);
+  const body = scene.add.graphics().setDepth(189);
+  const core = scene.add.graphics().setDepth(190);
+  drawBulletShape(glow, 9, 38, glowTint, 1);
+  drawBulletShape(body, 7, 34, missileTint, 1);
+  drawBulletShape(core, 2, 15, coreTint, 1);
+  glow.x = startX;
+  glow.y = startY;
+  body.x = startX;
+  body.y = startY;
+  core.x = startX;
+  core.y = startY;
+  const initialRotation = (Number(strike.angleRad || 0)) + Math.PI / 2;
+  glow.rotation = initialRotation;
+  body.rotation = initialRotation;
+  core.rotation = initialRotation;
+  scene.entityLayer.add(glow);
+  scene.entityLayer.add(body);
+  scene.entityLayer.add(core);
 
   const smokeTimer = scene.time.addEvent({
-    delay: 60,
+    delay: 45,
     repeat: -1,
     callback: () => {
-      if (!sprite.active) return;
-      const smoke = scene.add
-        .circle(sprite.x + (Math.random() - 0.5) * 6, sprite.y + (Math.random() - 0.5) * 6, 5, 0x888888, 0.5)
-        .setDepth(185);
-      scene.entityLayer.add(smoke);
+      if (!body?.active) return;
+      const trailAngle = Number(body.rotation || 0) - (Math.PI / 2);
+      const tailOffset = 14;
+      const tailX = body.x - (Math.cos(trailAngle) * tailOffset);
+      const tailY = body.y - (Math.sin(trailAngle) * tailOffset);
+      const emberCore = scene.add
+        .circle(
+          tailX + ((Math.random() - 0.5) * 3),
+          tailY + ((Math.random() - 0.5) * 3),
+          3.2,
+          Math.random() < 0.5 ? 0xffd166 : 0xff7a00,
+          0.82,
+        )
+        .setDepth(186)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      const emberGlow = scene.add
+        .circle(emberCore.x, emberCore.y, 6.5, 0xff6a00, 0.28)
+        .setDepth(185)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      scene.entityLayer.add(emberGlow);
+      scene.entityLayer.add(emberCore);
       scene.tweens.add({
-        targets: smoke,
+        targets: [emberCore, emberGlow],
         alpha: 0,
-        scaleX: 2.5,
-        scaleY: 2.5,
-        duration: 350,
-        onComplete: () => smoke.destroy(),
+        scaleX: 0.35,
+        scaleY: 0.35,
+        x: tailX - (Math.cos(trailAngle) * 10),
+        y: tailY - (Math.sin(trailAngle) * 10),
+        duration: 220,
+        onComplete: () => {
+          emberCore.destroy();
+          emberGlow.destroy();
+        },
       });
     },
   });
@@ -250,7 +418,10 @@ function createOnlineMissileVisual(scene, strike) {
     id: strike.id,
     ownerId: strike.ownerId,
     targetId: strike.targetId,
-    sprite,
+    pairKey: getOnlineMissilePairKey(strike.ownerId, strike.targetId),
+    glow,
+    body,
+    core,
     smokeTimer,
     x: startX,
     y: startY,
@@ -258,31 +429,84 @@ function createOnlineMissileVisual(scene, strike) {
     targetY: startY,
     angleRad: Number(strike.angleRad || 0),
     targetAngleRad: Number(strike.angleRad || 0),
+    startServerX: Number(strike.x || 0),
+    startServerY: Number(strike.y || 0),
+    endServerX: Number(strike.x || 0),
+    endServerY: Number(strike.y || 0),
+    startedAt: Number(strike.startedAt || Date.now()),
+    hitAt: Number(strike.hitAt || Date.now()),
+    durationMs: Number(strike.durationMs || 0),
+    optimistic: !!strike.optimistic,
+    lastSeenAt: strike.optimistic ? 0 : Date.now(),
+    expiresAt: Number(strike.expiresAt || 0),
   };
 }
 
-function syncOnlineMissileStrikes(scene, activeMissileStrikes = []) {
+function syncOnlineMissileStrikes(scene, activeMissileStrikes = [], serverTime = Date.now()) {
   const state = scene.onlineState;
   if (!state.onlineMissileStrikesById) state.onlineMissileStrikesById = {};
+  if (!state.onlineOptimisticMissileIdsByKey) state.onlineOptimisticMissileIdsByKey = {};
   const seenIds = new Set(activeMissileStrikes.map((strike) => strike.id));
+  const now = Date.now();
+  const estimatedLatencyMs = Math.max(0, Math.min(220, now - Number(serverTime || now)));
+  state.serverClockOffsetMs = estimatedLatencyMs;
+  state.snapshotLatencyMs = Number.isFinite(state.snapshotLatencyMs)
+    ? ((state.snapshotLatencyMs * 0.82) + (estimatedLatencyMs * 0.18))
+    : estimatedLatencyMs;
 
   activeMissileStrikes.forEach((strike) => {
     if (!strike?.id) return;
     let missile = state.onlineMissileStrikesById[strike.id];
     if (!missile) {
-      missile = createOnlineMissileVisual(scene, strike);
-      state.onlineMissileStrikesById[strike.id] = missile;
+      const pairKey = getOnlineMissilePairKey(strike.ownerId, strike.targetId);
+      const optimisticId = state.onlineOptimisticMissileIdsByKey[pairKey];
+      const optimisticMissile = optimisticId ? state.onlineMissileStrikesById[optimisticId] : null;
+      if (optimisticMissile) {
+        delete state.onlineMissileStrikesById[optimisticId];
+        missile = optimisticMissile;
+        missile.id = strike.id;
+        missile.optimistic = false;
+        state.onlineMissileStrikesById[strike.id] = missile;
+        delete state.onlineOptimisticMissileIdsByKey[pairKey];
+      } else {
+        missile = createOnlineMissileVisual(scene, strike);
+        state.onlineMissileStrikesById[strike.id] = missile;
+      }
     }
     missile.ownerId = strike.ownerId;
     missile.targetId = strike.targetId;
-    missile.targetX = scene.boardOriginX + Number(strike.x || 0);
-    missile.targetY = scene.boardOriginY + Number(strike.y || 0);
-    missile.targetAngleRad = Number(strike.angleRad || missile.targetAngleRad || 0);
-    missile.sprite?.setVisible?.(true);
+    missile.pairKey = getOnlineMissilePairKey(strike.ownerId, strike.targetId);
+    missile.startServerX = Number(strike.x || missile.startServerX || 0);
+    missile.startServerY = Number(strike.y || missile.startServerY || 0);
+    missile.startedAt = Number(strike.startedAt || missile.startedAt || now);
+    missile.hitAt = Number(strike.hitAt || missile.hitAt || now);
+    missile.durationMs = Math.max(1, Number(strike.durationMs || missile.durationMs || 0));
+    missile.lastSeenAt = now;
+    missile.expiresAt = Math.max(missile.hitAt + ONLINE_MISSILE_DESPAWN_GRACE_MS, now + ONLINE_MISSILE_DESPAWN_GRACE_MS);
+    const strikeAngle = Number(strike.angleRad || missile.targetAngleRad || 0);
+    const targetWorld = getOnlineMissileTargetWorld(scene, missile);
+    missile.endServerX = targetWorld.x;
+    missile.endServerY = targetWorld.y;
+    const renderServerNow = getEstimatedOnlineServerNow(state, now);
+    const progress = clamp01((renderServerNow - missile.startedAt) / missile.durationMs);
+    missile.x = scene.boardOriginX + (missile.startServerX + ((missile.endServerX - missile.startServerX) * progress));
+    missile.y = scene.boardOriginY + (missile.startServerY + ((missile.endServerY - missile.startServerY) * progress));
+    missile.targetAngleRad = Math.atan2(missile.endServerY - missile.startServerY, missile.endServerX - missile.startServerX) || strikeAngle;
+    missile.targetX = missile.x;
+    missile.targetY = missile.y;
+    missile.angleRad = missile.targetAngleRad;
+    missile.glow?.setVisible?.(true);
+    missile.body?.setVisible?.(true);
+    missile.core?.setVisible?.(true);
   });
 
   Object.entries(state.onlineMissileStrikesById).forEach(([id, missile]) => {
     if (seenIds.has(id)) return;
+    if (missile?.optimistic && now <= Number(missile.expiresAt || 0)) return;
+    if (!missile?.optimistic && now <= Math.max(Number(missile.hitAt || 0) + ONLINE_MISSILE_DESPAWN_GRACE_MS, Number(missile.lastSeenAt || 0) + ONLINE_MISSILE_DESPAWN_GRACE_MS)) {
+      return;
+    }
+    forgetOptimisticOnlineMissile(state, missile);
     destroyOnlineMissileVisual(missile);
     delete state.onlineMissileStrikesById[id];
   });
@@ -299,6 +523,8 @@ function destroyOnlineEffect(effect) {
     window.cancelAnimationFrame(effect.rafId);
   }
   effect?.sprite?.destroy?.();
+  effect?.glow?.destroy?.();
+  effect?.core?.destroy?.();
 }
 
 function ensureOnlineBases(scene) {
@@ -564,6 +790,83 @@ function spawnOnlineTankExplosion(scene, worldX, worldY) {
   }
 }
 
+function spawnOnlineMissileImpactEffect(scene, worldX, worldY) {
+  const glow = scene.add.circle(worldX, worldY, 10, 0xff9f5a, 0.4).setDepth(258).setBlendMode(Phaser.BlendModes.ADD);
+  const core = scene.add.circle(worldX, worldY, 5, 0xfff1c1, 0.82).setDepth(259).setBlendMode(Phaser.BlendModes.ADD);
+  scene.entityLayer.add(glow);
+  scene.entityLayer.add(core);
+
+  const effect = {
+    glow,
+    core,
+    rafId: null,
+    duration: 160,
+  };
+  scene.onlineState.effects.push(effect);
+
+  const startAt = performance.now();
+  const animate = (now) => {
+    if (!effect.glow?.active || !effect.core?.active) {
+      scene.onlineState.effects = scene.onlineState.effects.filter((entry) => entry !== effect);
+      return;
+    }
+    const progress = Math.max(0, Math.min(1, (now - startAt) / effect.duration));
+    const eased = 1 - Math.pow(1 - progress, 2);
+    effect.glow.setRadius(10 + (16 * eased));
+    effect.core.setRadius(5 + (6 * eased));
+    effect.glow.setAlpha(0.4 * (1 - eased));
+    effect.core.setAlpha(0.82 * (1 - eased));
+    if (progress >= 1) {
+      scene.onlineState.effects = scene.onlineState.effects.filter((entry) => entry !== effect);
+      destroyOnlineEffect(effect);
+      return;
+    }
+    effect.rafId = window.requestAnimationFrame(animate);
+  };
+
+  if (typeof window !== "undefined") {
+    effect.rafId = window.requestAnimationFrame(animate);
+  }
+}
+
+function syncOnlineMissileImpactEffects(scene, missileImpactEffects = []) {
+  const state = scene.onlineState;
+  if (!state.handledMissileImpactIds) state.handledMissileImpactIds = {};
+  const now = Date.now();
+  Object.entries(state.handledMissileImpactIds).forEach(([id, expiresAt]) => {
+    if (Number(expiresAt || 0) > now) return;
+    delete state.handledMissileImpactIds[id];
+  });
+
+  missileImpactEffects.forEach((impact) => {
+    if (!impact?.id || state.handledMissileImpactIds[impact.id]) return;
+    const worldX = scene.boardOriginX + Number(impact.x || 0);
+    const worldY = scene.boardOriginY + Number(impact.y || 0);
+    const missile = impact.strikeId ? state.onlineMissileStrikesById?.[impact.strikeId] : null;
+    if (missile) {
+      missile.x = worldX;
+      missile.y = worldY;
+      if (missile.glow?.active) {
+        missile.glow.x = worldX;
+        missile.glow.y = worldY;
+      }
+      if (missile.body?.active) {
+        missile.body.x = worldX;
+        missile.body.y = worldY;
+      }
+      if (missile.core?.active) {
+        missile.core.x = worldX;
+        missile.core.y = worldY;
+      }
+      forgetOptimisticOnlineMissile(state, missile);
+      destroyOnlineMissileVisual(missile);
+      delete state.onlineMissileStrikesById[impact.strikeId];
+    }
+    spawnOnlineMissileImpactEffect(scene, worldX, worldY);
+    state.handledMissileImpactIds[impact.id] = Number(impact.expiresAt || (now + 500));
+  });
+}
+
 // ── Power-ups online ──────────────────────────────────────────────────────
 function syncOnlinePowerUps(scene, serverPowerUps) {
   const state = scene.onlineState;
@@ -659,9 +962,49 @@ function checkOnlinePowerUpPickups(scene, delta) {
 }
 
 function applyOnlinePowerUpLocal(scene, localTank, type) {
-  void scene;
-  void localTank;
-  void type;
+  if (type !== POWER_TYPE.MISSILES || !scene?.onlineState || !localTank) return;
+  const state = scene.onlineState;
+  if (!state.onlineMissileStrikesById) state.onlineMissileStrikesById = {};
+  if (!state.onlineOptimisticMissileIdsByKey) state.onlineOptimisticMissileIdsByKey = {};
+
+  const localSnapshotTank = scene.matchState?.tanksById?.[localTank.id] || null;
+  const ownerX = Number(localSnapshotTank?.x ?? (localTank.x - scene.boardOriginX));
+  const ownerY = Number(localSnapshotTank?.y ?? (localTank.y - scene.boardOriginY));
+  const ownerTeam = localSnapshotTank?.team || null;
+  const targets = Object.values(scene.matchState?.tanksById || {}).filter((tank) => (
+    tank
+    && tank.id !== localTank.id
+    && !tank.isDestroyed
+    && (!ownerTeam || tank.team !== ownerTeam)
+  ));
+  const startedAt = Date.now() - ONLINE_MISSILE_OPTIMISTIC_LEAD_MS;
+
+  targets.forEach((targetTank) => {
+    const pairKey = getOnlineMissilePairKey(localTank.id, targetTank.id);
+    if (state.onlineOptimisticMissileIdsByKey[pairKey]) return;
+    const durationMs = estimateOnlineMissileDurationMs(ownerX, ownerY, targetTank.x, targetTank.y);
+    const angleRad = Math.atan2(Number(targetTank.y || 0) - ownerY, Number(targetTank.x || 0) - ownerX);
+    const strike = {
+      id: `optimistic-${localTank.id}-${targetTank.id}-${startedAt}`,
+      ownerId: localTank.id,
+      targetId: targetTank.id,
+      x: ownerX,
+      y: ownerY,
+      angleRad,
+      startedAt,
+      hitAt: startedAt + durationMs,
+      durationMs,
+      optimistic: true,
+      expiresAt: startedAt + durationMs + 220,
+    };
+    const missile = createOnlineMissileVisual(scene, strike);
+    missile.startServerX = ownerX;
+    missile.startServerY = ownerY;
+    missile.endServerX = Number(targetTank.x || ownerX);
+    missile.endServerY = Number(targetTank.y || ownerY);
+    state.onlineMissileStrikesById[strike.id] = missile;
+    state.onlineOptimisticMissileIdsByKey[pairKey] = strike.id;
+  });
 }
 
 function drawOnlineShieldSmokeRibbon(graphics, x, y, radiusX, radiusY, startAngle, endAngle, color, alpha, thickness, drift = 0) {
@@ -770,6 +1113,7 @@ function syncSnapshot(scene, snapshot) {
   const players = Array.isArray(snapshot?.players) ? snapshot.players : [];
   const bullets = Array.isArray(snapshot?.bullets) ? snapshot.bullets : [];
   const activeMissileStrikes = Array.isArray(snapshot?.activeMissileStrikes) ? snapshot.activeMissileStrikes : [];
+  const missileImpactEffects = Array.isArray(snapshot?.missileImpactEffects) ? snapshot.missileImpactEffects : [];
   const bases = Array.isArray(snapshot?.bases) ? snapshot.bases : [];
   const floor = snapshot?.floor || null;
   const overlay = snapshot?.overlay || null;
@@ -865,7 +1209,7 @@ function syncSnapshot(scene, snapshot) {
     bullet.targetX = targetX;
     bullet.targetY = targetY;
     bullet.targetAngleRad = remoteBullet.angleRad || bullet.targetAngleRad || 0;
-    if (!bullet.sprite.active) return;
+    if (!bullet.body?.active) return;
     scene.matchState.bulletsById[remoteBullet.id] = { ...remoteBullet };
   });
 
@@ -883,7 +1227,8 @@ function syncSnapshot(scene, snapshot) {
   });
 
   syncOnlineBaseVisuals(scene, bases);
-  syncOnlineMissileStrikes(scene, activeMissileStrikes);
+  syncOnlineMissileImpactEffects(scene, missileImpactEffects);
+  syncOnlineMissileStrikes(scene, activeMissileStrikes, snapshot?.serverTime);
 
   // ── Power-ups del servidor ──────────────────────────────────────────────
   syncOnlinePowerUps(scene, Array.isArray(snapshot?.powerUps) ? snapshot.powerUps : []);
@@ -943,6 +1288,10 @@ export function teardownOnlineMode(scene) {
     remoteTanksById: {},
     remoteBulletsById: {},
     onlineMissileStrikesById: {},
+    onlineOptimisticMissileIdsByKey: {},
+    handledMissileImpactIds: {},
+    serverClockOffsetMs: 0,
+    snapshotLatencyMs: 0,
     snapshot: null,
     fireHeld: false,
     localFireLatch: false,
@@ -1052,22 +1401,51 @@ function smoothRemoteState(scene, delta) {
     bullet.y += (bullet.targetY - bullet.y) * Math.min(1, delta / 65);
     const angleDiff = wrapAngleRad(bullet.targetAngleRad - bullet.angleRad);
     bullet.angleRad = wrapAngleRad(bullet.angleRad + angleDiff * Math.min(1, delta / 85));
-    if (bullet.sprite?.active) {
-      bullet.sprite.x = bullet.x;
-      bullet.sprite.y = bullet.y;
-      bullet.sprite.rotation = bullet.angleRad + Math.PI / 2;
+    const rotation = bullet.angleRad + Math.PI / 2;
+    if (bullet.glow?.active) {
+      bullet.glow.x = bullet.x;
+      bullet.glow.y = bullet.y;
+      bullet.glow.rotation = rotation;
+    }
+    if (bullet.body?.active) {
+      bullet.body.x = bullet.x;
+      bullet.body.y = bullet.y;
+      bullet.body.rotation = rotation;
+    }
+    if (bullet.core?.active) {
+      bullet.core.x = bullet.x;
+      bullet.core.y = bullet.y;
+      bullet.core.rotation = rotation;
     }
   });
 
   Object.values(scene.onlineState.onlineMissileStrikesById || {}).forEach((missile) => {
-    if (!missile.sprite?.active) return;
-    missile.x += (missile.targetX - missile.x) * Math.min(1, delta / 65);
-    missile.y += (missile.targetY - missile.y) * Math.min(1, delta / 65);
-    const angleDiff = wrapAngleRad(missile.targetAngleRad - missile.angleRad);
-    missile.angleRad = wrapAngleRad(missile.angleRad + angleDiff * Math.min(1, delta / 85));
-    missile.sprite.x = missile.x;
-    missile.sprite.y = missile.y;
-    missile.sprite.rotation = missile.angleRad + Math.PI / 2;
+    if (!missile.body?.active) return;
+    const renderServerNow = getEstimatedOnlineServerNow(scene.onlineState, Date.now());
+    const durationMs = Math.max(1, Number(missile.durationMs || 1));
+    const progress = clamp01((renderServerNow - Number(missile.startedAt || 0)) / durationMs);
+    const targetWorld = getOnlineMissileTargetWorld(scene, missile);
+    missile.endServerX = targetWorld.x;
+    missile.endServerY = targetWorld.y;
+    const worldX = Number(missile.startServerX || 0) + ((missile.endServerX - Number(missile.startServerX || 0)) * progress);
+    const worldY = Number(missile.startServerY || 0) + ((missile.endServerY - Number(missile.startServerY || 0)) * progress);
+    missile.x = scene.boardOriginX + worldX;
+    missile.y = scene.boardOriginY + worldY;
+    missile.angleRad = Math.atan2(missile.endServerY - worldY, missile.endServerX - worldX) || Number(missile.targetAngleRad || missile.angleRad || 0);
+    const rotation = missile.angleRad + Math.PI / 2;
+    if (missile.glow?.active) {
+      missile.glow.x = missile.x;
+      missile.glow.y = missile.y;
+      missile.glow.rotation = rotation;
+    }
+    missile.body.x = missile.x;
+    missile.body.y = missile.y;
+    missile.body.rotation = rotation;
+    if (missile.core?.active) {
+      missile.core.x = missile.x;
+      missile.core.y = missile.y;
+      missile.core.rotation = rotation;
+    }
   });
 }
 

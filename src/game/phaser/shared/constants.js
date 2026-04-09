@@ -34,8 +34,8 @@ export const TILE = {
   BASE: "base",
 };
 
-export const PLAYER_SPEED = 235;
-export const ENEMY_SPEED = 130;
+export const PLAYER_SPEED = 200;
+export const ENEMY_SPEED = 170;
 export const BULLET_SPEED = 620;
 export const FIRE_COOLDOWN_PLAYER = 170;
 export const FIRE_COOLDOWN_ENEMY = 950;
@@ -689,7 +689,7 @@ export const SETTINGS_SCHEMA = [
     min: 120,
     max: 260,
     step: 5,
-    defaultValue: 165,
+    defaultValue: 250,
   },
   {
     key: "debugEnemyNavOverlay",
