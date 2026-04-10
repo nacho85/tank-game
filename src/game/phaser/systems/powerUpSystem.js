@@ -1,14 +1,14 @@
 import * as Phaser from "phaser";
-import { MACRO_TILE_SIZE, TILE } from "../shared/constants";
+import { MACRO_TILE_SIZE, TILE } from "../shared/constants.js";
 import {
   cellCenterX,
   cellCenterY,
   getLevelHeight,
   getLevelWidth,
   applyBaseFortressToFineLevel,
-} from "../shared/levelGeneration";
-import { vectorLength } from "../shared/math";
-import { applyPlayerUpgrade } from "../factories/playerFactory";
+} from "../shared/levelGeneration.js";
+import { vectorLength } from "../shared/math.js";
+import { applyPlayerUpgrade } from "../factories/playerFactory.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constantes

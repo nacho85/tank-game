@@ -187,7 +187,40 @@ const MENU_SCREENS = {
   },
 };
 
-const MODE_OPTIONS = ["Normal", "Río", "Islas", "Archipiélagos"];
+const DEFAULT_ONLINE_MODE = "Clasico - 80s";
+const ONLINE_MODE_CONFIGS = {
+  [DEFAULT_ONLINE_MODE]: {
+    slotCount: 2,
+    usesDensity: false,
+    usesRoundSettings: false,
+    livesLabel: "Vidas iniciales",
+  },
+  Normal: {
+    slotCount: 4,
+    usesDensity: true,
+    usesRoundSettings: true,
+    livesLabel: "Vidas p/ronda",
+  },
+  "Rio": {
+    slotCount: 4,
+    usesDensity: true,
+    usesRoundSettings: true,
+    livesLabel: "Vidas p/ronda",
+  },
+  Islas: {
+    slotCount: 4,
+    usesDensity: true,
+    usesRoundSettings: true,
+    livesLabel: "Vidas p/ronda",
+  },
+  "Archipielagos": {
+    slotCount: 4,
+    usesDensity: true,
+    usesRoundSettings: true,
+    livesLabel: "Vidas p/ronda",
+  },
+};
+const MODE_OPTIONS = Object.keys(ONLINE_MODE_CONFIGS);
 const DENSITY_OPTIONS = ["Baja (0.75x)", "Normal (1x)", "Alta (1.25x)", "Muy alta (1.5x)"];
 const ROUND_OPTIONS = ["6", "10"];
 const LIVES_OPTIONS = ["1", "3", "5"];
@@ -553,8 +586,50 @@ function getDefaultRoomName(playerName) {
   return `Sala de ${safeName}`;
 }
 
-function buildInitialSlots(playerName) {
-  return normalizeSlotsWithAiIdentity([
+function getOnlineModeConfig(mode) {
+  return ONLINE_MODE_CONFIGS[mode] || ONLINE_MODE_CONFIGS.Normal;
+}
+
+function isClassicOnlineMode(mode) {
+  return getOnlineModeConfig(mode).slotCount === 2;
+}
+
+function normalizeSlotsForOnlineMode(slots = [], mode = DEFAULT_ONLINE_MODE) {
+  const modeConfig = getOnlineModeConfig(mode);
+  return normalizeSlotsWithAiIdentity(slots.map((slot, index) => {
+    const baseRole = slot.baseRole || slot.role || `Slot ${index + 1}`;
+    const isVisibleSlot = index < modeConfig.slotCount;
+
+    if (!isVisibleSlot) {
+      return {
+        ...slot,
+        label: baseRole,
+        role: baseRole,
+        baseRole,
+        kind: "Cerrado",
+        team: UNASSIGNED_TEAM,
+        isReady: false,
+        clientId: null,
+      };
+    }
+
+    return {
+      ...slot,
+      label: slot.label || baseRole,
+      role: slot.role || baseRole,
+      baseRole,
+      kind: slot.isHost ? "Jugador" : (slot.kind === "Cerrado" ? "Abierto" : slot.kind),
+      team: isClassicOnlineMode(mode) ? TEAM_ONE : (slot.team || UNASSIGNED_TEAM),
+    };
+  }));
+}
+
+function getVisibleRoomSlots(slots = [], mode = DEFAULT_ONLINE_MODE) {
+  return slots.slice(0, getOnlineModeConfig(mode).slotCount);
+}
+
+function buildInitialSlots(playerName, mode = DEFAULT_ONLINE_MODE) {
+  return normalizeSlotsForOnlineMode([
     {
       id: "host",
       label: playerName || "Player1",
@@ -583,7 +658,7 @@ function buildInitialSlots(playerName) {
       isReady: false,
       clientId: null,
     })),
-  ]);
+  ], mode);
 }
 
 function getOccupiedCount(slots) {
@@ -989,7 +1064,7 @@ function BrowseRoomsScreen({ lobby: sharedLobby = null, playerName, onBack, onCr
                   <div className={styles.slotsSection}>
                     <div className={styles.slotHeaderRow}><span /> <span>Jugador</span><span>Equipo</span><span>Tipo</span></div>
                     <div className={styles.slotsTable}>
-                      {selectedRoom.slots.map((slot) => (
+                      {getVisibleRoomSlots(selectedRoom.slots || [], selectedRoom.mode).map((slot) => (
                         <div className={styles.slotRow} key={slot.id}>
                           <div className={styles.colorSwatchButton} style={{ background: getColorSwatch(slot.color), pointerEvents: "none" }} />
                           <div className={styles.slotNameCell}><div className={styles.slotName}>{slot.label}</div><div className={styles.slotRole}>{slot.kind === "IA" ? `IA · ${slot.aiDifficulty || "Normal"}` : slot.role}</div></div>
@@ -1015,12 +1090,12 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
   const [statusIsError, setStatusIsError] = useState(false);
   const [roomName, setRoomName] = useState(() => getDefaultRoomName(playerName));
   const [isCreated, setIsCreated] = useState(!!initialRoomId);
-  const [mode, setMode] = useState("Normal");
+  const [mode, setMode] = useState(DEFAULT_ONLINE_MODE);
   const [density, setDensity] = useState("Normal (1x)");
   const [rounds, setRounds] = useState("6");
   const [lives, setLives] = useState("3");
   const [baseHits, setBaseHits] = useState("3");
-  const [slots, setSlots] = useState(() => buildInitialSlots(playerName));
+  const [slots, setSlots] = useState(() => buildInitialSlots(playerName, DEFAULT_ONLINE_MODE));
   const [chatInput, setChatInput] = useState("");
   const [openColorSlotId, setOpenColorSlotId] = useState(null);
   const [isHostReady, setIsHostReady] = useState(false);
@@ -1095,12 +1170,12 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
         if (!payload) return;
         setRoomId(payload.id);
         setRoomName(payload.roomName || "");
-        setMode(payload.mode || "Normal");
+        setMode(payload.mode || DEFAULT_ONLINE_MODE);
         setDensity(payload.density || "Normal (1x)");
         setRounds(payload.rounds || "6");
         setLives(payload.lives || "3");
         setBaseHits(payload.baseHits || "3");
-        setSlots(normalizeSlotsWithAiIdentity(payload.slots || []));
+        setSlots(normalizeSlotsForOnlineMode(payload.slots || [], payload.mode || DEFAULT_ONLINE_MODE));
         setMessages((payload.messages || []).length ? payload.messages : [{ id: "sys-empty", author: "Sistema", text: "Sala sincronizada." }]);
         setIsCreated(true);
         const currentLocalClientId = localClientIdRef.current;
@@ -1117,7 +1192,8 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
         setStatusText("La sala se cerró porque no quedaron jugadores humanos conectados.");
         setIsCreated(false);
         setRoomId(null);
-        setSlots(buildInitialSlots(playerName));
+        setMode(DEFAULT_ONLINE_MODE);
+        setSlots(buildInitialSlots(playerName, DEFAULT_ONLINE_MODE));
         clearOnlineSession();
       },
       match_starting: (payload) => {
@@ -1145,7 +1221,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
     if (!initialIsHost || initialRoomId || roomId || autoCreateRequestedRef.current || !createRequestIdRef.current) return;
 
     autoCreateRequestedRef.current = true;
-    const nextSlots = buildInitialSlots(playerName).map((slot, index) => {
+    const nextSlots = buildInitialSlots(playerName, mode).map((slot, index) => {
       if (index === 0) return { ...slot, label: playerName || "Player1" };
       return slot;
     });
@@ -1182,6 +1258,9 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
   }, []);
 
   const occupiedSlots = useMemo(() => getOccupiedCount(slots), [slots]);
+  const visibleSlots = useMemo(() => getVisibleRoomSlots(slots, mode), [slots, mode]);
+  const onlineModeConfig = useMemo(() => getOnlineModeConfig(mode), [mode]);
+  const isClassicRoomMode = onlineModeConfig.slotCount === 2;
   const localSlot = useMemo(
     () => (localClientId ? slots.find((slot) => slot.clientId === localClientId) || null : null),
     [slots, localClientId],
@@ -1194,10 +1273,11 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
     ? styles.roomFooterTextCountdown
     : (isVisibleErrorStatus ? styles.roomFooterTextError : styles.roomFooterTextInfo);
   const allHumansReady = useMemo(() => {
-    const humans = slots.filter((slot) => slot.clientId);
+    const humans = visibleSlots.filter((slot) => slot.clientId);
     return humans.length > 0 && humans.every((slot) => slot.isReady);
-  }, [slots]);
-  const canStartMatch = isCreated && occupiedSlots === 4 && allHumansReady && countdown == null;
+  }, [visibleSlots]);
+  const requiredOccupiedSlots = onlineModeConfig.slotCount;
+  const canStartMatch = isCreated && occupiedSlots === requiredOccupiedSlots && allHumansReady && countdown == null;
 
   useEffect(() => {
     if (!roomId) return;
@@ -1239,7 +1319,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
 
   function updateSlot(slotId, field, value) {
     if (!effectiveIsLocalHost) return;
-    setSlots((current) => normalizeSlotsWithAiIdentity(current.map((slot) => {
+    setSlots((current) => normalizeSlotsForOnlineMode(current.map((slot) => {
       if (slot.id !== slotId || slot.clientId || slot.isHost) return slot;
       if (field === "kind") {
         if (value === "IA") {
@@ -1262,18 +1342,22 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
           ? normalizeAiDifficulty(value)
           : (field === "color" ? normalizeCustomColor(value) : value),
       };
-    })));
+    }), mode));
   }
 
   function updateMyOwnSlot(slotId, field, value) {
-    setSlots((current) => current.map((slot) => {
+    const normalizedValue = field === "color"
+      ? normalizeCustomColor(value)
+      : (field === "team" && isClassicRoomMode ? TEAM_ONE : value);
+
+    setSlots((current) => normalizeSlotsForOnlineMode(current.map((slot) => {
       if (slot.id !== slotId) return slot;
       return {
         ...slot,
-        [field]: field === "color" ? normalizeCustomColor(value) : value,
+        [field]: normalizedValue,
       };
-    }));
-    lobby.send("update_my_slot", { roomId, [field]: field === "color" ? normalizeCustomColor(value) : value });
+    }), mode));
+    lobby.send("update_my_slot", { roomId, [field]: normalizedValue });
   }
 
   function sendMessage(event) {
@@ -1283,6 +1367,11 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
     lobby.send("room_chat", { roomId, text: trimmed });
     setChatInput("");
     setStatusText("Mensaje enviado al lobby.");
+  }
+
+  function handleModeChange(nextMode) {
+    setMode(nextMode);
+    setSlots((current) => normalizeSlotsForOnlineMode(current, nextMode));
   }
 
   useGamepadMenuNavigation({
@@ -1315,7 +1404,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
               <div className={styles.setupContent}>
                 <div className={styles.topSettingsGrid}>
                   <ReadonlySetting label="Nombre usuario" value={playerName} />
-                  <InlineSetting label="Modo"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setMode(event.target.value)} value={mode}>{MODE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  <InlineSetting label="Modo"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => handleModeChange(event.target.value)} value={mode}>{MODE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
                   <div className={styles.matchActionsInline}>
                     <label className={styles.readyToggle}>
                       <input checked={effectiveIsHostReady} className={styles.readyCheckbox} onChange={(event) => setIsHostReady(event.target.checked)} type="checkbox" />
@@ -1326,26 +1415,32 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
                     )}
                   </div>
                   <InlineSetting label="Nombre sala"><input className={styles.textField} disabled={!effectiveIsLocalHost} maxLength={30} onChange={(event) => setRoomName(event.target.value)} placeholder="Sala de Player1" type="text" value={roomName} /></InlineSetting>
-                  <InlineSetting label="Densidad"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setDensity(event.target.value)} value={density}>{DENSITY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  {onlineModeConfig.usesDensity ? <InlineSetting label="Densidad"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setDensity(event.target.value)} value={density}>{DENSITY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting> : <ReadonlySetting label="Formato" value="Cooperativo remoto (2 slots)" />}
                 </div>
 
                 <div className={styles.compactSettingsRow}>
-                  <InlineSetting label="Rondas"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setRounds(event.target.value)} value={rounds}>{ROUND_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
-                  <InlineSetting label="Vidas p/ronda"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setLives(event.target.value)} value={lives}>{LIVES_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
-                  <InlineSetting label="Balas vs base p/ronda"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setBaseHits(event.target.value)} value={baseHits}>{BASE_HITS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  {onlineModeConfig.usesRoundSettings ? (
+                    <>
+                      <InlineSetting label="Rondas"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setRounds(event.target.value)} value={rounds}>{ROUND_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                      <InlineSetting label={onlineModeConfig.livesLabel}><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setLives(event.target.value)} value={lives}>{LIVES_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                      <InlineSetting label="Balas vs base p/ronda"><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setBaseHits(event.target.value)} value={baseHits}>{BASE_HITS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                    </>
+                  ) : (
+                    <InlineSetting label={onlineModeConfig.livesLabel}><select className={styles.selectField} disabled={!effectiveIsLocalHost} onChange={(event) => setLives(event.target.value)} value={lives}>{LIVES_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></InlineSetting>
+                  )}
                 </div>
 
                 <div className={styles.slotsSection}>
                   <div className={styles.slotHeaderRow}><span /><span>Jugador</span><span>Equipo</span><span>Tipo</span></div>
                   <div className={styles.slotsTable}>
-                    {slots.map((slot) => {
+                    {visibleSlots.map((slot) => {
                       const isMySlot = !!slot.clientId && slot.clientId === localClientId;
                       const isMyHostSlot = effectiveIsLocalHost && slot.isHost;
                       const isEmptyHostEditable = !slot.clientId && !slot.isHost && effectiveIsLocalHost;
                       const canEditColor = isMySlot || isMyHostSlot || isEmptyHostEditable;
-                      const canEditTeam = isMySlot || isMyHostSlot || isEmptyHostEditable;
+                      const canEditTeam = !isClassicRoomMode && (isMySlot || isMyHostSlot || isEmptyHostEditable);
                       const teamOptions = getTeamOptionsForSlot(slots, slot);
-                      const selectedTeamValue = getEffectiveSlotTeamValue(slots, slot);
+                      const selectedTeamValue = isClassicRoomMode ? TEAM_ONE : getEffectiveSlotTeamValue(slots, slot);
                       return (
                         <div className={styles.slotRow} key={slot.id}>
                           <ColorPicker
@@ -1363,7 +1458,7 @@ function CreateRoomScreen({ lobby: sharedLobby = null, playerName, onPlayerNameC
                           {canEditTeam ? (
                             <select className={styles.slotSelect} onChange={(event) => (isMySlot || isMyHostSlot) ? updateMyOwnSlot(slot.id, "team", event.target.value) : updateSlot(slot.id, "team", event.target.value)} value={selectedTeamValue}>{teamOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select>
                           ) : (
-                            <div className={styles.readonlyValue}>{slot.team}</div>
+                            <div className={styles.readonlyValue}>{isClassicRoomMode ? "Co-op" : slot.team}</div>
                           )}
                           {slot.isHost ? <div className={styles.hostBadge}>Anfitrión</div> : slot.clientId ? <div className={styles.readonlyValue}>Jugador</div> : (
                             <div className={styles.slotTypeControls}>
@@ -1662,3 +1757,5 @@ export default function TankGameLanding({ onStartGame }) {
     </div>
   );
 }
+
+

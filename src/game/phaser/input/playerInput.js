@@ -4,11 +4,11 @@ import {
   MENU_AXIS_THRESHOLD,
   MOVE_DEADZONE,
   PLAYER_TURRET_MANUAL_TURN_SPEED,
-} from "../shared/constants";
-import { bigCellCenterX, bigCellCenterY } from "../shared/levelGeneration";
-import { vectorLength } from "../shared/math";
-import { computeTankControlStep } from "../core/sim/tankController";
-import { SPAWN_SHIELD_DURATION_MS, applyShield } from "../systems/powerUpSystem";
+} from "../shared/constants.js";
+import { bigCellCenterX, bigCellCenterY } from "../shared/levelGeneration.js";
+import { vectorLength } from "../shared/math.js";
+import { computeTankControlStep } from "../core/sim/tankController.js";
+import { SPAWN_SHIELD_DURATION_MS, applyShield } from "../systems/powerUpSystem.js";
 
 const DEFAULT_BINDINGS = {
   p1MoveUpKeyCode: Phaser.Input.Keyboard.KeyCodes.W,

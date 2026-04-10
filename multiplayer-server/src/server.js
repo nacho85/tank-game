@@ -1,9 +1,11 @@
 import { WebSocketServer } from "ws";
 import { MESSAGE } from "./protocol.js";
 import { computeTankControlStep } from "../../src/game/phaser/core/sim/tankController.js";
+import { CLASSIC_80S_LEVELS, CLASSIC_80S_WAVE_CONFIGS } from "../../src/game/phaser/core/levels.js";
 import { OUTER_BORDER_SIZE, PLAYER_SPEED, SURVIVAL_GRID_HEIGHT, SURVIVAL_GRID_WIDTH, TANK_COLLISION_SIZE, TANK_HIT_RADIUS, TILE, TILE_SIZE } from "../../src/game/phaser/shared/constants.js";
 import { createBulletState, getWeaponConfigForTankType, isBulletOutsideBoard, stepBulletState } from "../../src/game/phaser/core/sim/weaponSystem.js";
 import { getUpgradeTier } from "../../src/game/phaser/data/playerUpgrades.js";
+import { applyBaseFortressToFineLevel, bigCellCenterX, bigCellCenterY, cloneMatrix, getLevelBaseAnchorCol, getLevelBaseAnchorRow, getLevelHeight, getLevelPlayerSpawnCol, getLevelWidth, getEnemySpawnCenters } from "../../src/game/phaser/shared/levelGeneration.js";
 import { worldToGridCol, worldToGridRow, inBounds, isDestructibleTile, isBlockingTile } from "./onlineMap.js";
 import { createOnline2v2Level, getOnlineBaseWorld, getOnlineSpawnWorld, ONLINE_BASE_DEFS, ONLINE_ROLE_SPAWNS } from "./onlineMap.js";
 
@@ -32,6 +34,15 @@ const POWER_FLICKER_AT_MS = 2000;
 const POWER_FLICKER_STEP_MS = 200;
 const DOUBLE_SHOT_SPREAD_PX = 8;
 const DEFAULT_DENSITY = "Normal (1x)";
+const DEFAULT_LOBBY_MODE = "Clasico - 80s";
+const CLASSIC_ENEMY_SPEED = 170;
+const CLASSIC_ENEMY_SPAWN_INTERVAL_MS = 2200;
+const CLASSIC_LEVEL_TRANSITION_MS = 3500;
+const CLASSIC_ENEMY_FIRE_COOLDOWN_MIN_MS = 2200;
+const CLASSIC_ENEMY_FIRE_COOLDOWN_RANGE_MS = 1500;
+const CLASSIC_MAX_ENEMY_BULLETS = 1;
+const CLASSIC_ENEMY_NOTICE_RADIUS = TILE_SIZE * 9;
+const CLASSIC_ENEMY_FIRE_RANGE = TILE_SIZE * 8;
 const POWER_UP_PICKUP_RADIUS = 38;
 const MAX_HOSTED_ROOMS_PER_IP = 2;
 const DEFAULT_AI_DIFFICULTY = "Normal";
@@ -124,6 +135,11 @@ const ROLE_ORDER = [
   ONLINE_ROLE_SPAWNS.blue,
 ].map((spawn) => ({ ...spawn, x: getOnlineSpawnWorld(spawn.id).x, y: getOnlineSpawnWorld(spawn.id).y }));
 
+const CLASSIC_ROLE_ORDER = [
+  { id: "classic-p1", label: "Jugador 1", side: "south", colorTeam: "team1", slot: 1 },
+  { id: "classic-p2", label: "Jugador 2", side: "south", colorTeam: "team1", slot: 2 },
+];
+
 const SIDE_SWITCH_ROLE_MAP = { yellow: "red", green: "blue", red: "yellow", blue: "green" };
 const LOBBY_PING_TIMEOUT_MS = 20000;
 const LOBBY_SWEEP_MS = 5000;
@@ -141,7 +157,7 @@ function getEffectiveSpawnWorld(roleId, sideSwitched) {
 
 function createDefaultMatchConfig() {
   return {
-    mode: "Normal",
+    mode: DEFAULT_LOBBY_MODE,
     mapAlgorithm: 0,
     density: DEFAULT_DENSITY,
     densityMultiplier: 1,
@@ -160,12 +176,15 @@ function clampInteger(value, min, max, fallback) {
 
 function getMapAlgorithmFromRoomMode(mode) {
   switch (String(mode || "").trim()) {
+    case "Rio":
     case "Río":
       return 1;
     case "Islas":
       return 2;
+    case "Archipielagos":
     case "Archipiélagos":
       return 3;
+    case DEFAULT_LOBBY_MODE:
     case "Normal":
     default:
       return 0;
@@ -184,6 +203,19 @@ function buildMatchConfigFromRoom(room = null) {
   const defaults = createDefaultMatchConfig();
   const mode = room?.mode || defaults.mode;
   const density = room?.density || defaults.density;
+  if (isClassicLobbyMode(mode)) {
+    return {
+      ...defaults,
+      mode,
+      mapAlgorithm: 0,
+      density,
+      densityMultiplier: 1,
+      totalRounds: 1,
+      sideSwitchAfterRound: 1,
+      livesPerRound: clampInteger(room?.lives, 1, 9, defaults.livesPerRound),
+      baseHpPerRound: 1,
+    };
+  }
   const totalRounds = clampInteger(room?.rounds, 1, 99, defaults.totalRounds);
   return {
     mode,
@@ -272,7 +304,475 @@ function buildBotDifficultyProfile(aiDifficulty = DEFAULT_AI_DIFFICULTY) {
   };
 }
 
-function createFreshBases(baseHpPerRound = BASE_HP_PER_ROUND) {
+// ── Classic 80s online: enemy system ─────────────────────────────────────
+
+// Números de spawn (1-based) que generan un tanque power carrier (misma lógica que el modo local)
+const CLASSIC_POWER_CARRIER_SPAWN_NUMBERS = new Set([4, 11, 18]);
+
+function getActiveBoardBounds() {
+  if (isClassicMatchMode(gameplayRoom.matchConfig)) {
+    const w = getLevelWidth(gameplayRoom.level);
+    const h = getLevelHeight(gameplayRoom.level);
+    return { maxX: (w + 2) * TILE_SIZE, maxY: (h + 2) * TILE_SIZE };
+  }
+  return { maxX: BOARD_WIDTH, maxY: BOARD_HEIGHT };
+}
+
+function inBoundsForCurrentLevel(col, row) {
+  const w = getLevelWidth(gameplayRoom.level);
+  const h = getLevelHeight(gameplayRoom.level);
+  return col >= 0 && col < w && row >= 0 && row < h;
+}
+
+function createClassicStateForLevel(level, levelIndex) {
+  const waveConfig = CLASSIC_80S_WAVE_CONFIGS[levelIndex] || CLASSIC_80S_WAVE_CONFIGS[CLASSIC_80S_WAVE_CONFIGS.length - 1];
+  const eagleCol = getLevelBaseAnchorCol(level);
+  const eagleRow = getLevelBaseAnchorRow(level);
+  return {
+    enemies: new Map(),
+    levelIndex,
+    spawnedEnemiesCount: 0,
+    destroyedEnemiesCount: 0,
+    totalEnemies: waveConfig.totalEnemies,
+    maxConcurrent: waveConfig.maxConcurrent,
+    lastSpawnAt: 0,
+    eagle: { x: bigCellCenterX(eagleCol, 0), y: bigCellCenterY(eagleRow, 0), hp: 1, isDestroyed: false, radius: 30 },
+    gameOver: false,
+    gameOverReason: null,
+    levelTransitioning: false,
+    levelTransitionAt: null,
+    enemiesFrozenUntil: 0,
+    shovelUntil: 0,
+    shovelFlickerState: true,
+  };
+}
+
+function createClassicEnemy(spawnCol, spawnRow, isPowerCarrier = false) {
+  return {
+    id: `ce-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type: "enemy",
+    team: "enemy",
+    x: bigCellCenterX(spawnCol, 0),
+    y: bigCellCenterY(spawnRow, 0),
+    moveAngleDeg: 90,
+    turretAngleRad: Math.PI / 2,
+    moveSpeed: CLASSIC_ENEMY_SPEED,
+    activeBulletIds: new Set(),
+    lastFireAt: 0,
+    fireCooldown: CLASSIC_ENEMY_FIRE_COOLDOWN_MIN_MS + Math.random() * CLASSIC_ENEMY_FIRE_COOLDOWN_RANGE_MS,
+    isDestroyed: false,
+    hp: 1,
+    isPowerCarrier,
+    botState: {},
+  };
+}
+
+// Returns true if the tile at distance `dist` in direction `angleRad` is clear (no blocking tile)
+function isClearDirForEnemy(enemy, angleRad, dist = TILE_SIZE * 1.3) {
+  return canOccupyEnemyPosition(enemy, enemy.x + Math.cos(angleRad) * dist, enemy.y + Math.sin(angleRad) * dist);
+}
+
+// Returns true if there is a BRICK tile immediately ahead in `angleRad`
+function hasBrickAheadEnemy(enemy, angleRad) {
+  const probeX = enemy.x + Math.cos(angleRad) * TILE_SIZE * 0.85;
+  const probeY = enemy.y + Math.sin(angleRad) * TILE_SIZE * 0.85;
+  const col = worldToGridCol(probeX, 0);
+  const row = worldToGridRow(probeY, 0);
+  return gameplayRoom.level.obstacles?.[row]?.[col] === TILE.BRICK;
+}
+
+function wrapAngleRadSrv(angle) {
+  let a = angle;
+  while (a <= -Math.PI) a += Math.PI * 2;
+  while (a > Math.PI)  a -= Math.PI * 2;
+  return a;
+}
+
+function canOccupyEnemyPosition(enemy, x, y) {
+  const half = TANK_COLLISION_SIZE / 2;
+  const startCol = worldToGridCol(x - half, 0);
+  const endCol   = worldToGridCol(x + half, 0);
+  const startRow = worldToGridRow(y - half, 0);
+  const endRow   = worldToGridRow(y + half, 0);
+  if (!inBoundsForCurrentLevel(startCol, startRow) || !inBoundsForCurrentLevel(endCol, endRow)) return false;
+  for (let row = startRow; row <= endRow; row += 1) {
+    for (let col = startCol; col <= endCol; col += 1) {
+      const tile = gameplayRoom.level.obstacles?.[row]?.[col];
+      // enemies can shoot through BASE tile but can't occupy it, same as walls
+      if (isBlockingTile(tile)) return false;
+    }
+  }
+  const cs = gameplayRoom.classicState;
+  if (cs) {
+    for (const other of cs.enemies.values()) {
+      if (other === enemy || other.isDestroyed) continue;
+      if (vectorLength(x - other.x, y - other.y) < TANK_COLLISION_SIZE * 0.82) return false;
+    }
+  }
+  for (const player of gameplayRoom.players.values()) {
+    if (!player || player.isDestroyed) continue;
+    if (vectorLength(x - player.x, y - player.y) < TANK_COLLISION_SIZE * 0.82) return false;
+  }
+  return true;
+}
+
+function tickClassicEnemySpawns(now) {
+  const cs = gameplayRoom.classicState;
+  if (!cs || cs.spawnedEnemiesCount >= cs.totalEnemies) return;
+  const aliveCount = Array.from(cs.enemies.values()).filter((e) => !e.isDestroyed).length;
+  if (aliveCount >= cs.maxConcurrent) return;
+  if (now - cs.lastSpawnAt < CLASSIC_ENEMY_SPAWN_INTERVAL_MS) return;
+  const spawnCenters = getEnemySpawnCenters(gameplayRoom.level);
+  const shuffled = [...spawnCenters].sort(() => Math.random() - 0.5);
+  for (const spawn of shuffled) {
+    const sx = bigCellCenterX(spawn.col, 0);
+    const sy = bigCellCenterY(spawn.row, 0);
+    const occupied = Array.from(cs.enemies.values()).some(
+      (e) => !e.isDestroyed && vectorLength(e.x - sx, e.y - sy) < TANK_COLLISION_SIZE * 1.5,
+    );
+    // Check spawn tile is clear (no blocking tiles) — pass a sentinel so entity checks are skipped
+    const spawnTilesClear = (() => {
+      const half = TANK_COLLISION_SIZE / 2;
+      for (let row = worldToGridRow(sy - half, 0); row <= worldToGridRow(sy + half, 0); row += 1) {
+        for (let col = worldToGridCol(sx - half, 0); col <= worldToGridCol(sx + half, 0); col += 1) {
+          if (!inBoundsForCurrentLevel(col, row)) return false;
+          if (isBlockingTile(gameplayRoom.level.obstacles?.[row]?.[col])) return false;
+        }
+      }
+      return true;
+    })();
+    if (!occupied && spawnTilesClear) {
+      // spawnedEnemiesCount is 0-based here; we check 1-based spawn number
+      const spawnNumber = cs.spawnedEnemiesCount + 1;
+      const isPowerCarrier = CLASSIC_POWER_CARRIER_SPAWN_NUMBERS.has(spawnNumber);
+      const enemy = createClassicEnemy(spawn.col, spawn.row, isPowerCarrier);
+      cs.enemies.set(enemy.id, enemy);
+      cs.spawnedEnemiesCount += 1;
+      cs.lastSpawnAt = now;
+      break;
+    }
+  }
+}
+
+const CARDINALS_RAD = [0, Math.PI / 2, Math.PI, -Math.PI / 2]; // E, S, W, N
+
+function tickClassicEnemyAI(enemy, now) {
+  if (enemy.isDestroyed) return;
+  const bs = enemy.botState;
+  const cs = gameplayRoom.classicState;
+
+  // Target: nearest non-destroyed player within notice radius, otherwise the eagle
+  let targetX = cs.eagle.x;
+  let targetY = cs.eagle.y;
+  let nearestDist = Infinity;
+  gameplayRoom.players.forEach((player) => {
+    if (player.isDestroyed) return;
+    const dist = vectorLength(player.x - enemy.x, player.y - enemy.y);
+    if (dist < nearestDist && dist < CLASSIC_ENEMY_NOTICE_RADIUS) {
+      nearestDist = dist;
+      targetX = player.x;
+      targetY = player.y;
+    }
+  });
+
+  const dx = targetX - enemy.x;
+  const dy = targetY - enemy.y;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+
+  // When actively trying to break a wall, point turret at that wall instead of target
+  if (bs.wallFireUntil && now < bs.wallFireUntil && bs.sideStepAngle != null) {
+    enemy.turretAngleRad = bs.sideStepAngle;
+  } else {
+    enemy.turretAngleRad = Math.atan2(dy, dx);
+  }
+
+  // ── Stuck detection ───────────────────────────────────────────────────────
+  if (bs.lastX == null) { bs.lastX = enemy.x; bs.lastY = enemy.y; bs.lastProgressAt = now; }
+  if (now - (bs.lastProgressAt || now) > 350) {
+    const moved = vectorLength(enemy.x - bs.lastX, enemy.y - bs.lastY);
+    bs.stuckTimer = moved < 5 ? (bs.stuckTimer || 0) + (now - bs.lastProgressAt) : 0;
+    bs.lastX = enemy.x; bs.lastY = enemy.y; bs.lastProgressAt = now;
+  }
+
+  if ((bs.stuckTimer || 0) > 480) {
+    bs.stuckTimer = 0;
+
+    // Sort cardinals by closeness to target direction so the best free path is picked first
+    const targetAngle = Math.atan2(dy, dx);
+    const sorted = [...CARDINALS_RAD].sort(
+      (a, b) => Math.abs(wrapAngleRadSrv(a - targetAngle)) - Math.abs(wrapAngleRadSrv(b - targetAngle)),
+    );
+
+    // Find first clear cardinal
+    let freeAngle = sorted.find((a) => isClearDirForEnemy(enemy, a)) ?? null;
+
+    if (freeAngle == null) {
+      // Completely surrounded — fire at brick wall in the turret direction to break out
+      bs.wallFireUntil = now + 1200;
+      freeAngle = sorted[Math.floor(Math.random() * sorted.length)];
+    }
+
+    bs.sideStepUntil = now + 900;
+    bs.sideStepAngle = freeAngle;
+  }
+
+  // ── Movement ──────────────────────────────────────────────────────────────
+  let moveX, moveY;
+  if (bs.sideStepUntil && now < bs.sideStepUntil && bs.sideStepAngle != null) {
+    moveX = Math.cos(bs.sideStepAngle);
+    moveY = Math.sin(bs.sideStepAngle);
+  } else {
+    const jitter = 0.22;
+    moveX = dx / len + (Math.random() - 0.5) * 2 * jitter;
+    moveY = dy / len + (Math.random() - 0.5) * 2 * jitter;
+  }
+  enemy.input = { moveX, moveY };
+}
+
+function moveClassicEnemy(enemy) {
+  if (enemy.isDestroyed) return;
+  const { maxX: boardW, maxY: boardH } = getActiveBoardBounds();
+  const control = computeTankControlStep(
+    enemy,
+    { moveX: enemy.input?.moveX || 0, moveY: enemy.input?.moveY || 0, aimX: Math.cos(enemy.turretAngleRad), aimY: Math.sin(enemy.turretAngleRad) },
+    TICK_MS,
+    { preserveTurretWhenIdle: true, fallbackTurretToMove: false },
+  );
+  if (control.hasMove) {
+    const nextX = clamp(enemy.x + control.moveDx, MARGIN, boardW - MARGIN);
+    const nextY = clamp(enemy.y + control.moveDy, MARGIN, boardH - MARGIN);
+    if (canOccupyEnemyPosition(enemy, nextX, enemy.y)) enemy.x = nextX;
+    if (canOccupyEnemyPosition(enemy, enemy.x, nextY)) enemy.y = nextY;
+    enemy.moveAngleDeg = control.nextMoveAngleDeg;
+  }
+  enemy.turretAngleRad = control.nextTurretAngleRad;
+}
+
+function pruneEnemyBullets(enemy) {
+  enemy.activeBulletIds.forEach((id) => {
+    if (!gameplayRoom.bullets.has(id)) enemy.activeBulletIds.delete(id);
+  });
+}
+
+function tryFireClassicEnemy(enemy, now, frozen = false) {
+  if (enemy.isDestroyed || frozen) return;
+  const cs = gameplayRoom.classicState;
+  if (!cs || cs.gameOver) return;
+  pruneEnemyBullets(enemy);
+  if (enemy.activeBulletIds.size >= CLASSIC_MAX_ENEMY_BULLETS) return;
+  if (now - enemy.lastFireAt < enemy.fireCooldown) return;
+
+  // Wall-breaking fire: when stuck and surrounded, aim at turret direction and fire at brick
+  const bs = enemy.botState;
+  const wallFireActive = bs.wallFireUntil && now < bs.wallFireUntil;
+  if (wallFireActive && hasBrickAheadEnemy(enemy, enemy.turretAngleRad)) {
+    // Aim turret at the stuck direction to break the wall
+  } else {
+    bs.wallFireUntil = 0; // wall shot no longer useful
+    // Only fire if there's something in range to shoot at
+    let inRange = false;
+    gameplayRoom.players.forEach((player) => {
+      if (!player.isDestroyed && vectorLength(player.x - enemy.x, player.y - enemy.y) < CLASSIC_ENEMY_FIRE_RANGE) {
+        inRange = true;
+      }
+    });
+    if (!inRange && !cs.eagle.isDestroyed && vectorLength(cs.eagle.x - enemy.x, cs.eagle.y - enemy.y) < CLASSIC_ENEMY_FIRE_RANGE) {
+      inRange = true;
+    }
+    if (!inRange) return;
+  }
+  const bullet = createBulletState({
+    id: `eb-${Math.random().toString(36).slice(2, 10)}`,
+    ownerType: "enemy",
+    ownerId: enemy.id,
+    x: enemy.x,
+    y: enemy.y,
+    angleRad: enemy.turretAngleRad,
+    canDestroyStone: false,
+  });
+  bullet.ownerTeam = "enemy";
+  bullet.tint = 0xfff3a8;
+  gameplayRoom.bullets.set(bullet.id, bullet);
+  enemy.activeBulletIds.add(bullet.id);
+  enemy.lastFireAt = now;
+}
+
+// Power-ups disponibles en modo clásico (sin missiles — no hay base enemiga en coop)
+const CLASSIC_POWER_TYPES = ["shovel", "shield", "tank", "star", "clock"];
+
+function spawnClassicPowerUp(x, y) {
+  const type = CLASSIC_POWER_TYPES[Math.floor(Math.random() * CLASSIC_POWER_TYPES.length)];
+  const now = Date.now();
+  gameplayRoom.powerUps.push({
+    id: `pu-classic-${now}-${Math.random().toString(36).slice(2, 6)}`,
+    type,
+    x,
+    y,
+    spawnedAt: now,
+    expiresAt: now + POWER_DURATION_MS,
+  });
+}
+
+function resolveClassicBulletCollisions(bulletEntries, bulletsToDestroy) {
+  const cs = gameplayRoom.classicState;
+  if (!cs) return;
+  const enemiesToDestroy = [];
+
+  bulletEntries.forEach(([bulletId, bullet]) => {
+    if (!bullet || bulletsToDestroy.has(bulletId)) return;
+    const isEnemyBullet = bullet.ownerTeam === "enemy";
+
+    // Player bullet vs classic enemies
+    if (!isEnemyBullet) {
+      cs.enemies.forEach((enemy) => {
+        if (enemy.isDestroyed || bulletsToDestroy.has(bulletId)) return;
+        if (vectorLength(bullet.x - enemy.x, bullet.y - enemy.y) <= TANK_HIT_RADIUS + (bullet.hitRadius || 0)) {
+          bulletsToDestroy.add(bulletId);
+          if (!enemy.isDestroyed) {
+            enemy.isDestroyed = true;
+            enemy.activeBulletIds.forEach((id) => bulletsToDestroy.add(id));
+            enemiesToDestroy.push(enemy.id);
+          }
+        }
+      });
+    }
+
+    // Enemy bullet vs eagle
+    if (isEnemyBullet && cs.eagle && !cs.eagle.isDestroyed && !bulletsToDestroy.has(bulletId)) {
+      if (vectorLength(bullet.x - cs.eagle.x, bullet.y - cs.eagle.y) <= cs.eagle.radius + (bullet.hitRadius || 0)) {
+        cs.eagle.hp = Math.max(0, cs.eagle.hp - 1);
+        bulletsToDestroy.add(bulletId);
+        if (cs.eagle.hp <= 0) {
+          cs.eagle.isDestroyed = true;
+          triggerClassicGameOver("eagle");
+        }
+      }
+    }
+  });
+
+  // Increment count; keep in Map with isDestroyed=true so the next snapshot
+  // reaches the client before the visual is removed.  Cleanup happens at the
+  // start of the next tickClassicMode call.
+  enemiesToDestroy.forEach((id) => {
+    cs.destroyedEnemiesCount += 1;
+    const dead = cs.enemies.get(id);
+    if (dead?.isPowerCarrier) spawnClassicPowerUp(dead.x, dead.y);
+  });
+}
+
+function checkClassicPlayerGameOver(now) {
+  const cs = gameplayRoom.classicState;
+  if (!cs || cs.gameOver) return;
+  if (gameplayRoom.players.size === 0) return;
+  const allPermanentlyDead = Array.from(gameplayRoom.players.values()).every(
+    (player) => player.isDestroyed && (player.respawnAt || 0) === 0,
+  );
+  if (allPermanentlyDead) triggerClassicGameOver("lives");
+}
+
+function triggerClassicGameOver(reason) {
+  const cs = gameplayRoom.classicState;
+  if (!cs || cs.gameOver) return;
+  cs.gameOver = true;
+  cs.gameOverReason = reason;
+  cs.enemies.forEach((enemy) => {
+    enemy.activeBulletIds.forEach((id) => destroyBullet(id));
+    enemy.activeBulletIds.clear();
+  });
+}
+
+function advanceClassicLevel() {
+  const cs = gameplayRoom.classicState;
+  if (!cs) return;
+  const nextIdx = cs.levelIndex + 1;
+  const levels = CLASSIC_80S_LEVELS;
+  const nextRawLevel = levels[nextIdx] || levels[levels.length - 1];
+  const nextWave = CLASSIC_80S_WAVE_CONFIGS[nextIdx] || CLASSIC_80S_WAVE_CONFIGS[CLASSIC_80S_WAVE_CONFIGS.length - 1];
+  gameplayRoom.level = {
+    floor: cloneMatrix(nextRawLevel.floor),
+    overlay: cloneMatrix(nextRawLevel.overlay),
+    obstacles: cloneMatrix(nextRawLevel.obstacles),
+    mapAlgorithm: 0,
+  };
+  const eagleCol = getLevelBaseAnchorCol(gameplayRoom.level);
+  const eagleRow = getLevelBaseAnchorRow(gameplayRoom.level);
+  cs.levelIndex = nextIdx;
+  cs.enemies.clear();
+  cs.spawnedEnemiesCount = 0;
+  cs.destroyedEnemiesCount = 0;
+  cs.totalEnemies = nextWave.totalEnemies;
+  cs.maxConcurrent = nextWave.maxConcurrent;
+  cs.lastSpawnAt = 0;
+  cs.eagle = { x: bigCellCenterX(eagleCol, 0), y: bigCellCenterY(eagleRow, 0), hp: 1, isDestroyed: false, radius: 30 };
+  cs.levelTransitioning = false;
+  cs.levelTransitionAt = null;
+  gameplayRoom.bullets.clear();
+  gameplayRoom.powerUps = [];
+  // Respawn all players for new level
+  gameplayRoom.players.forEach((player) => {
+    const spawnConfig = getPlayerSpawnForRole(player.role);
+    player.x = spawnConfig.spawn.x;
+    player.y = spawnConfig.spawn.y;
+    player.isDestroyed = false;
+    player.respawnAt = 0;
+    player.hp = 1;
+    player.activeBulletIds = new Set();
+    activateSpawnShield(player);
+  });
+}
+
+function tickClassicMode(now) {
+  const cs = gameplayRoom.classicState;
+  if (!cs || cs.gameOver) return;
+
+  // Remove enemies that were already sent to clients with isDestroyed=true last tick
+  cs.enemies.forEach((enemy, id) => {
+    if (enemy.isDestroyed) cs.enemies.delete(id);
+  });
+
+  if (cs.levelTransitioning) {
+    if (now - cs.levelTransitionAt >= CLASSIC_LEVEL_TRANSITION_MS) advanceClassicLevel();
+    return;
+  }
+  // ── Shovel (fortress) timer ───────────────────────────────────────────
+  if (cs.shovelUntil > 0) {
+    const remaining = cs.shovelUntil - now;
+    if (remaining <= 0) {
+      applyBaseFortressToFineLevel(gameplayRoom.level, TILE.BRICK);
+      cs.shovelUntil = 0;
+    } else if (remaining < POWER_FLICKER_AT_MS) {
+      const flickerOn = Math.floor(remaining / POWER_FLICKER_STEP_MS) % 2 === 0;
+      if (flickerOn !== cs.shovelFlickerState) {
+        applyBaseFortressToFineLevel(gameplayRoom.level, flickerOn ? TILE.STEEL : TILE.BRICK);
+        cs.shovelFlickerState = flickerOn;
+      }
+    }
+  }
+
+  tickClassicEnemySpawns(now);
+  const frozen = cs.enemiesFrozenUntil > now;
+  cs.enemies.forEach((enemy) => tickClassicEnemyAI(enemy, now));
+  cs.enemies.forEach((enemy) => {
+    if (!frozen) moveClassicEnemy(enemy);
+    tryFireClassicEnemy(enemy, now, frozen);
+  });
+  const aliveEnemies = Array.from(cs.enemies.values()).filter((e) => !e.isDestroyed).length;
+  if (cs.spawnedEnemiesCount >= cs.totalEnemies && aliveEnemies === 0) {
+    cs.levelTransitioning = true;
+    cs.levelTransitionAt = now;
+  }
+  checkClassicPlayerGameOver(now);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function createFreshBases(matchConfigOrBaseHp = BASE_HP_PER_ROUND) {
+  if (typeof matchConfigOrBaseHp === "object" && isClassicMatchMode(matchConfigOrBaseHp)) {
+    return new Map();
+  }
+  const baseHpPerRound = typeof matchConfigOrBaseHp === "object"
+    ? Number(matchConfigOrBaseHp?.baseHpPerRound || BASE_HP_PER_ROUND)
+    : Number(matchConfigOrBaseHp || BASE_HP_PER_ROUND);
   return new Map([
     ["south", { ...getOnlineBaseWorld("south"), hp: baseHpPerRound, maxHp: baseHpPerRound }],
     ["north", { ...getOnlineBaseWorld("north"), hp: baseHpPerRound, maxHp: baseHpPerRound }],
@@ -280,7 +780,39 @@ function createFreshBases(baseHpPerRound = BASE_HP_PER_ROUND) {
 }
 
 function getColorTeam(roleId) {
+  if (roleId === "classic-p1" || roleId === "classic-p2") return "team1";
   return roleId === "yellow" || roleId === "green" ? "team1" : "team2";
+}
+
+function getClassicSpawnWorld(slot = 1) {
+  const level = gameplayRoom.level || createClassicOnlineLevel();
+  const spawnCol = getLevelPlayerSpawnCol(level, slot);
+  const spawnRow = getLevelBaseAnchorRow(level);
+  return {
+    x: bigCellCenterX(spawnCol, 0),
+    y: bigCellCenterY(spawnRow, 0),
+  };
+}
+
+function getPlayerSpawnForRole(role, matchConfig = gameplayRoom.matchConfig, sideSwitched = gameplayRoom.roundState.sideSwitched) {
+  if (isClassicMatchMode(matchConfig)) {
+    const slot = role?.slot || (role?.id === "classic-p2" ? 2 : 1);
+    return {
+      team: "south",
+      spawn: getClassicSpawnWorld(slot),
+      moveAngleDeg: -90,
+      turretAngleRad: -Math.PI / 2,
+    };
+  }
+
+  const team = getEffectiveTeam(role.id, sideSwitched);
+  const spawn = getEffectiveSpawnWorld(role.id, sideSwitched);
+  return {
+    team,
+    spawn,
+    moveAngleDeg: team === "south" ? 0 : 180,
+    turretAngleRad: team === "south" ? 0 : Math.PI,
+  };
 }
 
 function colorTeamForGeographicWinner(geographicTeam, sideSwitched) {
@@ -321,9 +853,10 @@ const legacyGameplayRoom = {
   powerUpKillMilestone: 3,       // próxima baja-meta para soltar poder
   status: { winnerTeam: null },
   matchConfig: createDefaultMatchConfig(),
-  level: createOnline2v2Level(createDefaultMatchConfig()),
-  bases: createFreshBases(createDefaultMatchConfig().baseHpPerRound),
+  level: createLevelForMatch(createDefaultMatchConfig()),
+  bases: createFreshBases(createDefaultMatchConfig()),
   roundState: createRoundState(createDefaultMatchConfig()),
+  classicState: null,
 };
 const lobbyRooms = new Map();
 const gameplayRooms = new Map();
@@ -335,6 +868,7 @@ function createGameplayRoom(roomId, matchConfig = null) {
     ...createDefaultMatchConfig(),
     ...(matchConfig || {}),
   };
+  const level = createLevelForMatch(nextMatchConfig);
   return {
     roomId,
     players: new Map(),
@@ -350,9 +884,10 @@ function createGameplayRoom(roomId, matchConfig = null) {
     powerUpKillMilestone: 3,
     status: { winnerTeam: null },
     matchConfig: nextMatchConfig,
-    level: createOnline2v2Level(nextMatchConfig),
-    bases: createFreshBases(nextMatchConfig.baseHpPerRound),
+    level,
+    bases: createFreshBases(nextMatchConfig),
     roundState: createRoundState(nextMatchConfig),
+    classicState: isClassicMatchMode(nextMatchConfig) ? createClassicStateForLevel(level, 0) : null,
     pendingMatchSlots: [],
   };
 }
@@ -422,9 +957,10 @@ function resetGameplayRoomState(matchConfig = null) {
   gameplayRoom.powerUpKillMilestone = 3;
   gameplayRoom.status = { winnerTeam: null };
   gameplayRoom.matchConfig = nextMatchConfig;
-  gameplayRoom.level = createOnline2v2Level(nextMatchConfig);
-  gameplayRoom.bases = createFreshBases(nextMatchConfig.baseHpPerRound);
+  gameplayRoom.level = createLevelForMatch(nextMatchConfig);
+  gameplayRoom.bases = createFreshBases(nextMatchConfig);
   gameplayRoom.roundState = createRoundState(nextMatchConfig);
+  gameplayRoom.classicState = isClassicMatchMode(nextMatchConfig) ? createClassicStateForLevel(gameplayRoom.level, 0) : null;
 }
 
 function cleanupGameplayIfEmpty() {
@@ -445,6 +981,65 @@ const lobbyReconnectTimers = new Map();
 const LOBBY_GRACE_MS = 30000;
 
 const TEAM_TO_ROLE_IDS = { "1": ["yellow", "green"], "2": ["red", "blue"] };
+
+function getLobbyModeConfig(mode) {
+  if (String(mode || "").trim() === DEFAULT_LOBBY_MODE) {
+    return { slotCount: 2 };
+  }
+  return { slotCount: 4 };
+}
+
+function isClassicLobbyMode(mode) {
+  return getLobbyModeConfig(mode).slotCount === 2;
+}
+
+function isClassicMatchMode(matchConfig = null) {
+  return isClassicLobbyMode(matchConfig?.mode);
+}
+
+function createClassicOnlineLevel() {
+  const level = CLASSIC_80S_LEVELS[0];
+  return {
+    floor: cloneMatrix(level.floor),
+    overlay: cloneMatrix(level.overlay),
+    obstacles: cloneMatrix(level.obstacles),
+    mapAlgorithm: 0,
+  };
+}
+
+function createLevelForMatch(matchConfig = null) {
+  return isClassicMatchMode(matchConfig)
+    ? createClassicOnlineLevel()
+    : createOnline2v2Level(matchConfig);
+}
+
+function normalizeLobbySlotsForMode(slots = [], mode = DEFAULT_LOBBY_MODE) {
+  const modeConfig = getLobbyModeConfig(mode);
+  return normalizeLobbyAiSlots(slots.map((slot, index) => {
+    const baseRole = slot?.baseRole || slot?.role || `Slot ${index + 1}`;
+    if (index >= modeConfig.slotCount) {
+      return {
+        ...slot,
+        label: baseRole,
+        role: baseRole,
+        baseRole,
+        kind: "Cerrado",
+        team: "-",
+        isReady: false,
+        clientId: null,
+      };
+    }
+
+    return {
+      ...slot,
+      label: slot?.label || baseRole,
+      role: slot?.role || baseRole,
+      baseRole,
+      kind: slot?.isHost ? "Jugador" : ((slot?.kind || "Abierto") === "Cerrado" ? "Abierto" : (slot?.kind || "Abierto")),
+      team: isClassicLobbyMode(mode) ? "1" : (slot?.team || "-"),
+    };
+  }));
+}
 
 function normalizeCustomColor(value) {
   const normalized = String(value || "").trim();
@@ -620,6 +1215,11 @@ function toProjectileColor(color) {
 }
 
 function assignRoleFromSlot(slot, takenRoleIds) {
+  if (isClassicLobbyMode(slot?.mode)) {
+    const availableClassicRoles = CLASSIC_ROLE_ORDER.filter((role) => !takenRoleIds.has(role.id));
+    return availableClassicRoles[0] || null;
+  }
+
   const available = ROLE_ORDER.filter((r) => !takenRoleIds.has(r.id));
   if (!available.length) return null;
 
@@ -893,6 +1493,13 @@ function setOnlineBaseFortress(baseId, tileType = TILE.BRICK) {
 }
 
 function applyOnlineShovelEffect(player) {
+  if (isClassicMatchMode(gameplayRoom.matchConfig) && gameplayRoom.classicState) {
+    const cs = gameplayRoom.classicState;
+    applyBaseFortressToFineLevel(gameplayRoom.level, TILE.STEEL);
+    cs.shovelUntil = Date.now() + POWER_DURATION_MS;
+    cs.shovelFlickerState = true;
+    return;
+  }
   const baseId = player?.team;
   if (!baseId || !ONLINE_BASE_DEFS?.[baseId]) return;
 
@@ -1015,6 +1622,10 @@ function applyOnlineShieldEffect(player, now = Date.now()) {
 function applyOnlineClockEffect(player) {
   if (!player) return;
   const now = Date.now();
+  if (isClassicMatchMode(gameplayRoom.matchConfig) && gameplayRoom.classicState) {
+    gameplayRoom.classicState.enemiesFrozenUntil = now + POWER_DURATION_MS;
+    return;
+  }
   const frozenTeam = player.team === "south" ? "north" : "south";
   gameplayRoom.teamFreezeEffects.set(frozenTeam, {
     startedAt: now,
@@ -1395,8 +2006,9 @@ function canLobbyRoomStart(room) {
   if (!room) return { ok: false, message: "La sala ya no existe." };
 
   const occupiedCount = getLobbyOccupiedCount(room);
-  if (occupiedCount !== 4) {
-    return { ok: false, message: "Necesitás 4 slots ocupados para comenzar la partida." };
+  const requiredOccupiedCount = getLobbyModeConfig(room.mode).slotCount;
+  if (occupiedCount !== requiredOccupiedCount) {
+    return { ok: false, message: `Necesitas ${requiredOccupiedCount} slots ocupados para comenzar la partida.` };
   }
 
   const humanSlots = room.slots.filter((slot) => slot.clientId);
@@ -1569,7 +2181,8 @@ function createLobbyRoom(clientId, payload = {}) {
         createLobbySlotFromSource({ id: "slot-4", label: "Slot 4", role: "Slot 4", kind: "Abierto", color: RANDOM_PLAYER_COLOR }, "slot-4"),
       ];
 
-  const lobbySlots = normalizeLobbyAiSlots(normalizedSlots);
+  const requestedMode = payload.mode || DEFAULT_LOBBY_MODE;
+  const lobbySlots = normalizeLobbySlotsForMode(normalizedSlots, requestedMode);
 
   lobbySlots[0] = {
     ...lobbySlots[0],
@@ -1588,7 +2201,7 @@ function createLobbyRoom(clientId, payload = {}) {
     hostClientId: clientId,
     hostBrowserToken: browserToken,
     hostName,
-    mode: payload.mode || "Normal",
+    mode: requestedMode,
     density: payload.density || "Normal (1x)",
     rounds: payload.rounds || "6",
     lives: payload.lives || "3",
@@ -1608,6 +2221,7 @@ function createLobbyRoom(clientId, payload = {}) {
     client.playerName = hostName;
   }
   sendToClient(clientId, MESSAGE.JOINED_ROOM, { roomId: room.id, isHost: true });
+  room.slots = normalizeLobbySlotsForMode(room.slots, room.mode);
   broadcastRoomDetail(room.id);
   broadcastLobbyList();
 }
@@ -1617,16 +2231,25 @@ function updateLobbyRoom(clientId, payload = {}) {
   const room = roomId ? lobbyRooms.get(roomId) : null;
   if (!room || room.hostClientId !== clientId) return;
 
+  const requestedMode = payload.mode || room.mode;
+  const hasHumansOutsideClassicSlots = isClassicLobbyMode(requestedMode)
+    && room.slots.slice(getLobbyModeConfig(requestedMode).slotCount).some((slot) => !!slot?.clientId);
+  if (hasHumansOutsideClassicSlots) {
+    sendToClient(clientId, MESSAGE.ERROR, { message: "No podes cambiar a Clasico - 80s mientras haya jugadores conectados en los slots 3 o 4." });
+    broadcastRoomDetail(room.id);
+    return;
+  }
+
   room.roomName = String(payload.roomName || room.roomName).trim() || room.roomName;
   room.hostName = String(payload.playerName || room.hostName).trim() || room.hostName;
-  room.mode = payload.mode || room.mode;
+  room.mode = requestedMode;
   room.density = payload.density || room.density;
   room.rounds = payload.rounds || room.rounds;
   room.lives = payload.lives || room.lives;
   room.baseHits = payload.baseHits || room.baseHits;
 
   if (Array.isArray(payload.slots) && payload.slots.length === room.slots.length) {
-    room.slots = normalizeLobbyAiSlots(payload.slots.map((incoming, index) => {
+    room.slots = normalizeLobbySlotsForMode(payload.slots.map((incoming, index) => {
       const existing = room.slots[index];
       const isOccupiedHuman = !!existing.clientId;
       const nextKind = isOccupiedHuman ? existing.kind : incoming.kind || existing.kind;
@@ -1641,7 +2264,7 @@ function updateLobbyRoom(clientId, payload = {}) {
         kind: existing.isHost ? "Jugador" : nextKind,
         locked: existing.isHost ? true : !!incoming.locked,
       };
-    }));
+    }), room.mode);
   }
 
   const hostSlot = room.slots.find((slot) => slot.clientId === room.hostClientId);
@@ -1722,8 +2345,11 @@ function updateMySlot(clientId, payload = {}) {
   if (!slot) return;
   if (payload.color !== undefined) slot.color = normalizeCustomColor(payload.color);
   if (payload.team !== undefined) {
-    slot.team = normalizeLobbyTeamValue(room, payload.team, { excludeClientId: clientId });
+    slot.team = isClassicLobbyMode(room.mode)
+      ? "1"
+      : normalizeLobbyTeamValue(room, payload.team, { excludeClientId: clientId });
   }
+  room.slots = normalizeLobbySlotsForMode(room.slots, room.mode);
   broadcastRoomDetail(room.id);
   broadcastLobbyList();
 }
@@ -1867,6 +2493,7 @@ function sendRoomChat(clientId, payload = {}) {
 }
 
 function getMatchWinner() {
+  if (isClassicMatchMode(gameplayRoom.matchConfig)) return null;
   const { currentRound, totalRounds, scores } = gameplayRoom.roundState;
   const diff = scores.team1 - scores.team2;
   const roundsToWin = Math.floor(totalRounds / 2) + 1;
@@ -1888,6 +2515,7 @@ function teamHasRoundLivesRemaining(team, now = Date.now()) {
 }
 
 function getRoundWinnerByTeamElimination(now = Date.now()) {
+  if (isClassicMatchMode(gameplayRoom.matchConfig)) return null;
   const southAlive = teamHasRoundLivesRemaining("south", now);
   const northAlive = teamHasRoundLivesRemaining("north", now);
   if (southAlive === northAlive) return null;
@@ -1895,10 +2523,11 @@ function getRoundWinnerByTeamElimination(now = Date.now()) {
 }
 
 function resetPlayerForRespawn(player) {
+  const spawnConfig = getPlayerSpawnForRole(player.role);
   player.x = player.spawnX;
   player.y = player.spawnY;
-  player.moveAngleDeg = player.team === "south" ? 0 : 180;
-  player.turretAngleRad = player.team === "south" ? 0 : Math.PI;
+  player.moveAngleDeg = spawnConfig.moveAngleDeg;
+  player.turretAngleRad = spawnConfig.turretAngleRad;
   player.input = { moveX: 0, moveY: 0, aimX: 0, aimY: 0, fire: false };
   player.activeBulletIds = new Set();
   player.lastFireAt = 0;
@@ -1930,11 +2559,10 @@ function resetPlayerUpgradeState(player) {
 }
 
 function applyRoundSideToPlayer(player) {
-  const sideSwitched = gameplayRoom.roundState.sideSwitched;
-  const spawn = getEffectiveSpawnWorld(player.role.id, sideSwitched);
-  player.team = getEffectiveTeam(player.role.id, sideSwitched);
-  player.spawnX = spawn.x;
-  player.spawnY = spawn.y;
+  const spawnConfig = getPlayerSpawnForRole(player.role);
+  player.team = spawnConfig.team;
+  player.spawnX = spawnConfig.spawn.x;
+  player.spawnY = spawnConfig.spawn.y;
 }
 
 function startNewRound() {
@@ -1948,8 +2576,8 @@ function startNewRound() {
   gameplayRoom.roundState.transitionDurationMs = ROUND_TRANSITION_MS;
   gameplayRoom.roundState.showPartialSummary = false;
   gameplayRoom.status.winnerTeam = null;
-  gameplayRoom.level = createOnline2v2Level(gameplayRoom.matchConfig);
-  gameplayRoom.bases = createFreshBases(gameplayRoom.matchConfig?.baseHpPerRound);
+  gameplayRoom.level = createLevelForMatch(gameplayRoom.matchConfig);
+  gameplayRoom.bases = createFreshBases(gameplayRoom.matchConfig);
   gameplayRoom.bullets.clear();
   gameplayRoom.powerUps = [];
   gameplayRoom.activeMissileStrikes = [];
@@ -1986,7 +2614,10 @@ function canOccupyPlayerPosition(player, x, y) {
   const endCol = worldToGridCol(right, 0);
   const startRow = worldToGridRow(top, 0);
   const endRow = worldToGridRow(bottom, 0);
-  if (!inBounds(startCol, startRow) || !inBounds(endCol, endRow)) return false;
+  const boundsCheck = isClassicMatchMode(gameplayRoom.matchConfig)
+    ? (c, r) => inBoundsForCurrentLevel(c, r)
+    : (c, r) => inBounds(c, r);
+  if (!boundsCheck(startCol, startRow) || !boundsCheck(endCol, endRow)) return false;
   for (let row = startRow; row <= endRow; row += 1) {
     for (let col = startCol; col <= endCol; col += 1) {
       if (isBlockingTile(gameplayRoom.level.obstacles?.[row]?.[col])) return false;
@@ -1995,6 +2626,13 @@ function canOccupyPlayerPosition(player, x, y) {
   for (const other of gameplayRoom.players.values()) {
     if (!other || other === player || other.isDestroyed) continue;
     if (vectorLength(x - other.x, y - other.y) < TANK_COLLISION_SIZE * 0.82) return false;
+  }
+  // In classic mode, players also collide with enemy tanks
+  if (isClassicMatchMode(gameplayRoom.matchConfig) && gameplayRoom.classicState) {
+    for (const enemy of gameplayRoom.classicState.enemies.values()) {
+      if (enemy.isDestroyed) continue;
+      if (vectorLength(x - enemy.x, y - enemy.y) < TANK_COLLISION_SIZE * 0.82) return false;
+    }
   }
   return true;
 }
@@ -2099,6 +2737,28 @@ function buildSnapshot() {
         ? colorTeamForGeographicWinner(gameplayRoom.status.winnerTeam, gameplayRoom.roundState.sideSwitched)
         : null,
     },
+    classicEnemies: isClassicMatchMode(gameplayRoom.matchConfig) && gameplayRoom.classicState
+      ? Array.from(gameplayRoom.classicState.enemies.values()).map((e) => ({
+          id: e.id, x: e.x, y: e.y,
+          moveAngleDeg: e.moveAngleDeg, turretAngleRad: e.turretAngleRad,
+          isDestroyed: e.isDestroyed,
+          isPowerCarrier: !!e.isPowerCarrier,
+        }))
+      : null,
+    classicState: isClassicMatchMode(gameplayRoom.matchConfig) && gameplayRoom.classicState
+      ? {
+          levelIndex: gameplayRoom.classicState.levelIndex,
+          spawnedEnemiesCount: gameplayRoom.classicState.spawnedEnemiesCount,
+          destroyedEnemiesCount: gameplayRoom.classicState.destroyedEnemiesCount,
+          totalEnemies: gameplayRoom.classicState.totalEnemies,
+          gameOver: gameplayRoom.classicState.gameOver,
+          gameOverReason: gameplayRoom.classicState.gameOverReason,
+          eagle: gameplayRoom.classicState.eagle ? { ...gameplayRoom.classicState.eagle } : null,
+          levelTransitioning: gameplayRoom.classicState.levelTransitioning,
+          enemiesFrozen: gameplayRoom.classicState.enemiesFrozenUntil > Date.now(),
+          shovelActive: gameplayRoom.classicState.shovelUntil > Date.now(),
+        }
+      : null,
   };
 }
 
@@ -2113,9 +2773,7 @@ function createPlayer(
     usedColors = new Set(),
   } = {},
 ) {
-  const sideSwitched = gameplayRoom.roundState.sideSwitched;
-  const effectiveTeam = getEffectiveTeam(role.id, sideSwitched);
-  const spawn = getEffectiveSpawnWorld(role.id, sideSwitched);
+  const spawnConfig = getPlayerSpawnForRole(role);
   const tier = getUpgradeTier(0);
   const botDifficulty = normalizeAiDifficulty(aiDifficulty);
   return {
@@ -2125,18 +2783,18 @@ function createPlayer(
     label: label || role.label,
     visualColor: resolveVisualColor(visualColor, usedColors),
     colorTeam: getColorTeam(role.id),
-    team: effectiveTeam,
-    spawnX: spawn.x,
-    spawnY: spawn.y,
-    x: spawn.x,
-    y: spawn.y,
-    moveAngleDeg: effectiveTeam === "south" ? 0 : 180,
+    team: spawnConfig.team,
+    spawnX: spawnConfig.spawn.x,
+    spawnY: spawnConfig.spawn.y,
+    x: spawnConfig.spawn.x,
+    y: spawnConfig.spawn.y,
+    moveAngleDeg: spawnConfig.moveAngleDeg,
     moveSpeed: PLAYER_SPEED,
-    turretAngleRad: effectiveTeam === "south" ? 0 : Math.PI,
+    turretAngleRad: spawnConfig.turretAngleRad,
     input: { moveX: 0, moveY: 0, aimX: 0, aimY: 0, fire: false },
     activeBulletIds: new Set(),
     hp: 1,
-    shieldUntil: 0,
+    shieldUntil: isClassicMatchMode(gameplayRoom.matchConfig) ? Date.now() + SPAWN_SHIELD_DURATION_MS : 0,
     shieldFlickerOnExpire: false,
     freezeExemptUntil: 0,
     extraLives: Math.max(0, Number(gameplayRoom.matchConfig?.livesPerRound || 1) - 1),
@@ -2192,8 +2850,8 @@ function handleJoin(clientId, ws, payload = {}) {
     }
 
     if (gameplayRoom.players.size === 0) {
-      gameplayRoom.level = createOnline2v2Level(gameplayRoom.matchConfig);
-      gameplayRoom.bases = createFreshBases(gameplayRoom.matchConfig?.baseHpPerRound);
+      gameplayRoom.level = createLevelForMatch(gameplayRoom.matchConfig);
+      gameplayRoom.bases = createFreshBases(gameplayRoom.matchConfig);
       gameplayRoom.status = { winnerTeam: null };
       gameplayRoom.roundState = createRoundState(gameplayRoom.matchConfig);
       gameplayRoom.bullets.clear();
@@ -2210,12 +2868,12 @@ function handleJoin(clientId, ws, payload = {}) {
         const botSlots = gameplayRoom.pendingMatchSlots.filter((s) => s.kind === "IA");
 
         humanSlots.forEach((slot) => {
-          const role = assignRoleFromSlot(slot, takenRoleIds);
+          const role = assignRoleFromSlot({ ...slot, mode: gameplayRoom.matchConfig?.mode }, takenRoleIds);
           if (role) takenRoleIds.add(role.id);
         });
 
         botSlots.forEach((slot) => {
-          const role = assignRoleFromSlot(slot, takenRoleIds);
+          const role = assignRoleFromSlot({ ...slot, mode: gameplayRoom.matchConfig?.mode }, takenRoleIds);
           if (!role) return;
           takenRoleIds.add(role.id);
           const botId = `bot-${gameplayRoom.roomId}-${role.id}`;
@@ -2235,7 +2893,7 @@ function handleJoin(clientId, ws, payload = {}) {
 
     const takenRoleIds = new Set(Array.from(gameplayRoom.players.values()).map((p) => p.role.id));
     const mySlot = gameplayRoom.pendingMatchSlots.find((s) => s.clientId === clientId) || null;
-    const role = assignRoleFromSlot(mySlot, takenRoleIds);
+    const role = assignRoleFromSlot({ ...(mySlot || {}), mode: gameplayRoom.matchConfig?.mode }, takenRoleIds);
 
     if (!role) {
       ws.send(JSON.stringify({ type: MESSAGE.ERROR, payload: { message: "Sala llena" } }));
@@ -2340,9 +2998,11 @@ function tryFirePlayer(player) {
 }
 
 function updateRespawns(now) {
+  const classicGameOver = isClassicMatchMode(gameplayRoom.matchConfig) && !!gameplayRoom.classicState?.gameOver;
   gameplayRoom.players.forEach((player) => {
     if (!player || !player.isDestroyed || !player.respawnAt) return;
     if (now < player.respawnAt) return;
+    if (classicGameOver) { player.respawnAt = 0; return; }
     resetPlayerForRespawn(player);
   });
 }
@@ -2380,6 +3040,7 @@ function updateMissileStrikes(now) {
 
 function tick() {
   const now = Date.now();
+  const isClassic = isClassicMatchMode(gameplayRoom.matchConfig);
   let allowInterRoundMovement = false;
   gameplayRoom.chatMessages = (gameplayRoom.chatMessages || []).filter((message) => Number(message?.expiresAt || 0) > now);
   updateOnlinePowerUps(now);
@@ -2388,11 +3049,19 @@ function tick() {
   updateMissileStrikes(now);
   updateRespawns(now);
 
-  if (!gameplayRoom.status.winnerTeam && !gameplayRoom.roundState.transitioning && !gameplayRoom.roundState.matchOver) {
-    gameplayRoom.status.winnerTeam = getRoundWinnerByTeamElimination(now);
+  if (isClassic) {
+    tickClassicMode(now);
+    if (gameplayRoom.classicState?.gameOver) {
+      broadcast(MESSAGE.SNAPSHOT, buildSnapshot());
+      return;
+    }
+  } else {
+    if (!gameplayRoom.status.winnerTeam && !gameplayRoom.roundState.transitioning && !gameplayRoom.roundState.matchOver) {
+      gameplayRoom.status.winnerTeam = getRoundWinnerByTeamElimination(now);
+    }
   }
 
-  if (gameplayRoom.roundState.transitioning) {
+  if (!isClassic && gameplayRoom.roundState.transitioning) {
     const elapsed = now - gameplayRoom.roundState.transitionAt;
     if (elapsed >= Number(gameplayRoom.roundState.transitionDurationMs || ROUND_TRANSITION_MS)) {
       const winner = getMatchWinner();
@@ -2410,7 +3079,7 @@ function tick() {
     allowInterRoundMovement = true;
   }
 
-  if (gameplayRoom.status.winnerTeam && !gameplayRoom.roundState.transitioning && !gameplayRoom.roundState.matchOver) {
+  if (!isClassic && gameplayRoom.status.winnerTeam && !gameplayRoom.roundState.transitioning && !gameplayRoom.roundState.matchOver) {
     const colorWinner = colorTeamForGeographicWinner(gameplayRoom.status.winnerTeam, gameplayRoom.roundState.sideSwitched);
     gameplayRoom.roundState.scores[colorWinner] = (gameplayRoom.roundState.scores[colorWinner] || 0) + 1;
     clearRoundFreezeState();
@@ -2432,7 +3101,7 @@ function tick() {
     return;
   }
 
-  if (gameplayRoom.roundState.matchOver) {
+  if (!isClassic && gameplayRoom.roundState.matchOver) {
     broadcast(MESSAGE.SNAPSHOT, buildSnapshot());
     return;
   }
@@ -2449,17 +3118,30 @@ function tick() {
     const profile = player.botProfile || buildBotDifficultyProfile(player.botDifficulty);
     player.botProfile = profile;
 
-    // ── Target selection: prefer nearby enemy player, else the enemy base ──
+    // ── Target selection ──────────────────────────────────────────────────
     const ENEMY_NOTICE_RADIUS = profile.noticeRadius;
     let nearestEnemy = null;
     let nearestEnemyDist = Infinity;
-    gameplayRoom.players.forEach((other) => {
-      if (other === player || other.isDestroyed || other.team === player.team) return;
-      const dist = vectorLength(other.x - player.x, other.y - player.y);
-      if (dist < nearestEnemyDist) { nearestEnemyDist = dist; nearestEnemy = other; }
-    });
 
-    const enemyBase = Array.from(gameplayRoom.bases.values()).find((b) => b.team !== player.team && b.hp > 0);
+    if (isClassic && gameplayRoom.classicState) {
+      // Classic mode: target nearest alive enemy tank
+      gameplayRoom.classicState.enemies.forEach((e) => {
+        if (e.isDestroyed) return;
+        const dist = vectorLength(e.x - player.x, e.y - player.y);
+        if (dist < nearestEnemyDist) { nearestEnemyDist = dist; nearestEnemy = e; }
+      });
+    } else {
+      gameplayRoom.players.forEach((other) => {
+        if (other === player || other.isDestroyed || other.team === player.team) return;
+        const dist = vectorLength(other.x - player.x, other.y - player.y);
+        if (dist < nearestEnemyDist) { nearestEnemyDist = dist; nearestEnemy = other; }
+      });
+    }
+
+    // In classic mode the "enemy base" is the eagle (defend it, not attack it);
+    // fall back to the eagle position so the bot patrols near it when no enemies are visible.
+    const classicEagle = isClassic ? gameplayRoom.classicState?.eagle : null;
+    const enemyBase = isClassic ? null : Array.from(gameplayRoom.bases.values()).find((b) => b.team !== player.team && b.hp > 0);
     const { powerUp: targetPowerUp } = chooseBotPowerUpTarget(player);
     const isCloseCombat = nearestEnemy && nearestEnemyDist < profile.closeCombatRadius;
     const shouldChasePowerUp = !!targetPowerUp && (
@@ -2468,13 +3150,13 @@ function tick() {
         : (!nearestEnemy || nearestEnemyDist > profile.powerUpEnemyDistance)
     );
     const isHuntingPlayer = !shouldChasePowerUp && nearestEnemy && nearestEnemyDist < ENEMY_NOTICE_RADIUS;
-    const targetX = shouldChasePowerUp
-      ? targetPowerUp.x
-      : (isHuntingPlayer ? nearestEnemy.x : (enemyBase?.x ?? player.x));
-    const targetY = shouldChasePowerUp
-      ? targetPowerUp.y
-      : (isHuntingPlayer ? nearestEnemy.y : (enemyBase?.y ?? player.y));
-    const combatTarget = isHuntingPlayer ? nearestEnemy : (!shouldChasePowerUp ? enemyBase : null);
+
+    // Classic: when nothing to hunt, move toward eagle to protect it
+    const fallbackX = classicEagle ? classicEagle.x : (enemyBase?.x ?? player.x);
+    const fallbackY = classicEagle ? classicEagle.y : (enemyBase?.y ?? player.y);
+    const targetX = shouldChasePowerUp ? targetPowerUp.x : (isHuntingPlayer ? nearestEnemy.x : fallbackX);
+    const targetY = shouldChasePowerUp ? targetPowerUp.y : (isHuntingPlayer ? nearestEnemy.y : fallbackY);
+    const combatTarget = isHuntingPlayer ? nearestEnemy : (!shouldChasePowerUp && !isClassic ? enemyBase : null);
     const combatTargetDist = combatTarget
       ? vectorLength((combatTarget.x || 0) - player.x, (combatTarget.y || 0) - player.y)
       : Infinity;
@@ -2574,8 +3256,9 @@ function tick() {
     );
 
     if (control.hasMove) {
-      const nextX = clamp(player.x + control.moveDx, MARGIN, BOARD_WIDTH - MARGIN);
-      const nextY = clamp(player.y + control.moveDy, MARGIN, BOARD_HEIGHT - MARGIN);
+      const { maxX: activeBoardW, maxY: activeBoardH } = getActiveBoardBounds();
+      const nextX = clamp(player.x + control.moveDx, MARGIN, activeBoardW - MARGIN);
+      const nextY = clamp(player.y + control.moveDy, MARGIN, activeBoardH - MARGIN);
       if (canOccupyPlayerPosition(player, nextX, player.y)) player.x = nextX;
       if (canOccupyPlayerPosition(player, player.x, nextY)) player.y = nextY;
       player.moveAngleDeg = control.nextMoveAngleDeg;
@@ -2592,11 +3275,10 @@ function tick() {
     if (bulletId) bulletsToDestroy.add(bulletId);
   };
 
+  const { maxX: activeBoardW, maxY: activeBoardH } = getActiveBoardBounds();
   bulletEntries.forEach(([bulletId, bullet]) => {
     stepBulletState(bullet, TICK_MS);
-    const col = worldToGridCol(bullet.x, 0);
-    const row = worldToGridRow(bullet.y, 0);
-    if (isBulletOutsideBoard(bullet, { minX: MARGIN, minY: MARGIN, maxX: BOARD_WIDTH - MARGIN, maxY: BOARD_HEIGHT - MARGIN }, 0)) {
+    if (isBulletOutsideBoard(bullet, { minX: MARGIN, minY: MARGIN, maxX: activeBoardW - MARGIN, maxY: activeBoardH - MARGIN }, 0)) {
       queueBulletDestroy(bulletId);
       return;
     }
@@ -2606,7 +3288,7 @@ function tick() {
     if (!bullet || bulletsToDestroy.has(bulletId)) return;
     const col = worldToGridCol(bullet.x, 0);
     const row = worldToGridRow(bullet.y, 0);
-    if (inBounds(col, row)) {
+    if (inBoundsForCurrentLevel(col, row)) {
       const obstacle = gameplayRoom.level.obstacles?.[row]?.[col];
       const fortressBaseId = getFortressBaseIdAtCell(col, row);
       const fortressProtected = !!fortressBaseId && gameplayRoom.baseFortressEffects.has(fortressBaseId);
@@ -2681,6 +3363,8 @@ function tick() {
 
     for (const player of gameplayRoom.players.values()) {
       if (!player || player.isDestroyed || player.id === bullet.ownerId) continue;
+      // In classic mode, player bullets don't hurt allied players — only enemy bullets do
+      if (isClassic && gameplayRoom.players.has(bullet.ownerId)) continue;
       if (vectorLength(bullet.x - player.x, bullet.y - player.y) <= TANK_HIT_RADIUS + (bullet.hitRadius || 0)) {
         if (hasActiveShield(player, now)) {
           queueBulletDestroy(bulletId);
@@ -2700,6 +3384,9 @@ function tick() {
       }
     }
   });
+
+  // Classic 80s: player bullets hit enemies, enemy bullets hit eagle
+  if (isClassic) resolveClassicBulletCollisions(bulletEntries, bulletsToDestroy);
 
   bulletsToDestroy.forEach((bulletId) => destroyBullet(bulletId));
 
@@ -2847,3 +3534,4 @@ setInterval(() => {
 console.log(`[multiplayer] Servidor escuchando en ws://${HOST}:${PORT}`);
 console.log(`[multiplayer] La siguiente linea es solo diagnostico de configuracion online, no un error.`);
 console.log(`Rondas: ${TOTAL_ROUNDS} | Cambio de lado: ronda ${SIDE_SWITCH_AFTER_ROUND + 1} | HP águila: ${BASE_HP_PER_ROUND}`);
+

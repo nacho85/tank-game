@@ -1,5 +1,5 @@
-import { ONLINE_MESSAGE, normalizeWsUrl } from "../protocol";
-import { getOrCreateOnlineReconnectToken } from "../session";
+import { ONLINE_MESSAGE, normalizeWsUrl } from "../protocol.js";
+import { getOrCreateOnlineReconnectToken } from "../session.js";
 
 export function createOnlineSocketClient({
   url,

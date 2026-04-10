@@ -3,8 +3,8 @@ import {
   BOARD_WIDTH,
   GRID_WIDTH,
   HUD_GUTTER,
-} from "../../shared/constants";
-import { createMatchState } from "./matchState";
+} from "../../shared/constants.js";
+import { createMatchState } from "./matchState.js";
 
 export function createSceneState(scene, width, height) {
   const boardOriginX = Math.floor((width - BOARD_WIDTH) / 2);

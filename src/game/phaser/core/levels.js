@@ -1,11 +1,11 @@
-import { TILE } from "../shared/constants";
+import { TILE } from "../shared/constants.js";
 import {
   BASE_MACRO_LEVEL,
   expandLevelFromMacro,
   makeMatrix,
   makeMacroMatrix,
   withPattern,
-} from "../shared/levelGeneration";
+} from "../shared/levelGeneration.js";
 
 export const BOSS_CLASSIC_LEVELS = [
   expandLevelFromMacro(BASE_MACRO_LEVEL),

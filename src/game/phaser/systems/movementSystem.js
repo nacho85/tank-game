@@ -1,6 +1,6 @@
-import { TANK_COLLISION_SIZE } from "../shared/constants";
-import { getLevelHeight, getLevelWidth, inBounds, isBlockingTile, worldToGridCol, worldToGridRow } from "../shared/levelGeneration";
-import { vectorLength } from "../shared/math";
+import { TANK_COLLISION_SIZE } from "../shared/constants.js";
+import { getLevelHeight, getLevelWidth, inBounds, isBlockingTile, worldToGridCol, worldToGridRow } from "../shared/levelGeneration.js";
+import { vectorLength } from "../shared/math.js";
 
 export function tryMoveTank(scene, tank, moveX, moveY) {
   let moved = false;

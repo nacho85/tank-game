@@ -1,6 +1,6 @@
 import * as Phaser from "phaser";
-import { GameScene } from "./scenes/GameScene";
-import { GAME_HEIGHT, GAME_WIDTH } from "./shared/layout";
+import { GameScene } from "./scenes/GameScene.jsx";
+import { GAME_HEIGHT, GAME_WIDTH } from "./shared/layout.js";
 
 export function createGameConfig(container) {
   return {

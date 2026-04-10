@@ -3,11 +3,11 @@ import {
   PLAYER_SPEED,
   PLAYER_TURRET_BASE_FACING_RAD,
   TANK_RENDER_SIZE,
-} from "../shared/constants";
-import { bigCellCenterX, bigCellCenterY, getLevelBaseAnchorRow, getLevelPlayerSpawnCol } from "../shared/levelGeneration";
-import { createTankSprite, swapTankSprites, updateTankVisuals } from "../render/tankRendering";
-import { registerTank } from "../core/state/matchState";
-import { getUpgradeTier } from "../data/playerUpgrades";
+} from "../shared/constants.js";
+import { bigCellCenterX, bigCellCenterY, getLevelBaseAnchorRow, getLevelPlayerSpawnCol } from "../shared/levelGeneration.js";
+import { createTankSprite, swapTankSprites, updateTankVisuals } from "../render/tankRendering.js";
+import { registerTank } from "../core/state/matchState.js";
+import { getUpgradeTier } from "../data/playerUpgrades.js";
 
 export function getPlayerSpawnForSlot(slot = 1, level = null) {
   return { col: getLevelPlayerSpawnCol(level, slot), row: getLevelBaseAnchorRow(level) };
@@ -105,7 +105,7 @@ export function createPlayerTwo(scene) {
  *
  * Uso típico (desde GameScene o quien maneje el pickup de estrella):
  *
- *   import { applyPlayerUpgrade } from '../factories/playerFactory';
+ *   import { applyPlayerUpgrade } from '../factories/playerFactory.js';
  *   applyPlayerUpgrade(scene, scene.player, scene.player.starCount + 1);
  *
  * @param {Phaser.Scene} scene

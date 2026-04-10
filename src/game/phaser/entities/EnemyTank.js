@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { Bullet } from './Bullet';
+import { Bullet } from './Bullet.js';
 
 const DIRECTIONS = ['up', 'down', 'left', 'right'];
 

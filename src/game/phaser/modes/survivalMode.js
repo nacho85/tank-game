@@ -2,16 +2,16 @@ import {
   EAGLE_COL,
   EAGLE_ROW,
   TILE,
-} from "../shared/constants";
+} from "../shared/constants.js";
 import {
   applyBaseFortressToFineLevel,
   clearFineRect,
   createProceduralSurvivalLevel,
-} from "../shared/levelGeneration";
-import { applyPlayerUpgrade } from "../factories/playerFactory";
-import { clearEntityCollections, syncSceneStatsToMatchState } from "../core/state/matchState";
-import { SPAWN_SHIELD_DURATION_MS, applyShield, initPowerUpState, cleanupPowerUps } from "../systems/powerUpSystem";
-import { showSurvivalWaveBanner } from "../ui/hudRenderer";
+} from "../shared/levelGeneration.js";
+import { applyPlayerUpgrade } from "../factories/playerFactory.js";
+import { clearEntityCollections, syncSceneStatsToMatchState } from "../core/state/matchState.js";
+import { SPAWN_SHIELD_DURATION_MS, applyShield, initPowerUpState, cleanupPowerUps } from "../systems/powerUpSystem.js";
+import { showSurvivalWaveBanner } from "../ui/hudRenderer.js";
 
 function rebuildSurvivalWaveActors(scene) {
   const friendlyStates = [

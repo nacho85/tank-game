@@ -16,31 +16,31 @@ import {
   STATS_STORAGE_KEY,
   TILE,
   TILE_SIZE,
-} from "../shared/constants";
+} from "../shared/constants.js";
 import {
   bigCellCenterX,
   bigCellCenterY,
   cellCenterX,
   cellCenterY,
   isBaseAnchorCell,
-} from "../shared/levelGeneration";
+} from "../shared/levelGeneration.js";
 import {
   clamp,
   createEmptyCombatStats,
   sanitizePresetName,
   vectorLength,
-} from "../shared/math";
-import { createSceneState } from "../core/state/createSceneState";
-import { clearEntityCollections, syncSceneStatsToMatchState, syncSceneStatusToMatchState } from "../core/state/matchState";
-import { createHud, showMessage as showHudMessage, updateStatsText as renderStatsText, updateWaveText as renderWaveText } from "../ui/hudRenderer";
-import { createTankSprite, updateTankVisuals } from "../render/tankRendering";
+} from "../shared/math.js";
+import { createSceneState } from "../core/state/createSceneState.js";
+import { clearEntityCollections, syncSceneStatsToMatchState, syncSceneStatusToMatchState } from "../core/state/matchState.js";
+import { createHud, showMessage as showHudMessage, updateStatsText as renderStatsText, updateWaveText as renderWaveText } from "../ui/hudRenderer.js";
+import { createTankSprite, updateTankVisuals } from "../render/tankRendering.js";
 import {
   createPlayer,
   createPlayerTankForSlot,
   createPlayerTwo,
   getFriendlyTanks,
   getPlayerSpawnForSlot,
-} from "../factories/playerFactory";
+} from "../factories/playerFactory.js";
 import {
   getBrowserPads,
   getConnectedPads,
@@ -60,14 +60,14 @@ import {
   updateCoopText,
   updatePadStatus,
   updatePlayer,
-} from "../input/playerInput";
+} from "../input/playerInput.js";
 import {
   canOccupyWorldPosition,
   resolveTankOverlaps,
   shouldTanksCollide,
   tryMoveTank,
   worldToCell,
-} from "../systems/movementSystem";
+} from "../systems/movementSystem.js";
 import {
   canTankFire,
   fireBullet,
@@ -76,14 +76,14 @@ import {
   removeBulletByIndex,
   spawnTankHitExplosion,
   updateBullets,
-} from "../systems/projectileSystem";
+} from "../systems/projectileSystem.js";
 import {
   destroyPlayerTankVisuals,
   handlePlayerHit,
   schedulePlayerRespawn,
   tryRespawnPlayer,
   updateLivesText,
-} from "../systems/playerLifecycle";
+} from "../systems/playerLifecycle.js";
 import {
   applyEnemyBehaviorPresetToSettings,
   buildEnemyNavigationFieldForTargets,
@@ -130,21 +130,21 @@ import {
   updateEnemy,
   updateEnemyDebugHud,
   updateEnemyRouteSelfEvaluation,
-} from "../systems/enemySystem";
+} from "../systems/enemySystem.js";
 import {
   getConfiguredStartingLives as getConfiguredStartingLivesForScene,
   getCurrentGameMode as getCurrentGameModeForScene,
   loadSelectedGameMode as loadSelectedGameModeForScene,
-} from "../modes/modeManager";
-import { loadLevel as loadClassicLevel } from "../modes/classicMode";
+} from "../modes/modeManager.js";
+import { loadLevel as loadClassicLevel } from "../modes/classicMode.js";
 import {
   destroyAllBullets as destroyAllBulletsForScene,
   loadSurvivalMode as loadSurvivalModeForScene,
   rebuildBaseFortress as rebuildBaseFortressForScene,
   reshuffleSurvivalMap as reshuffleSurvivalMapForScene,
-} from "../modes/survivalMode";
-import { loadOnlineMode as loadOnlineModeForScene, teardownOnlineMode as teardownOnlineModeForScene, updateOnlineMode as updateOnlineModeForScene } from "../modes/onlineMode";
-import { getOnlineBaseDefByAnchor } from "../modes/onlineLevel";
+} from "../modes/survivalMode.js";
+import { loadOnlineMode as loadOnlineModeForScene, teardownOnlineMode as teardownOnlineModeForScene, updateOnlineMode as updateOnlineModeForScene } from "../modes/onlineMode.js";
+import { getOnlineBaseDefByAnchor } from "../modes/onlineLevel.js";
 import {
   initPowerUpState,
   makeEnemyArmored,
@@ -152,7 +152,7 @@ import {
   spawnRandomPowerUp,
   updatePowerUps,
   cleanupPowerUps,
-} from "../systems/powerUpSystem";
+} from "../systems/powerUpSystem.js";
 
 const PLAYER_MENU_ITEMS = [
   { key: "resume", label: "Reanudar partida" },

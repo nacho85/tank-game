@@ -1,8 +1,8 @@
-import { getClassicModeConfig } from "../core/levels";
-import { applyPlayerUpgrade } from "../factories/playerFactory";
-import { LEVEL_WAVE_CONFIGS } from "../shared/constants";
-import { cloneMatrix } from "../shared/levelGeneration";
-import { SPAWN_SHIELD_DURATION_MS, applyShield } from "../systems/powerUpSystem";
+import { getClassicModeConfig } from "../core/levels.js";
+import { applyPlayerUpgrade } from "../factories/playerFactory.js";
+import { LEVEL_WAVE_CONFIGS } from "../shared/constants.js";
+import { cloneMatrix } from "../shared/levelGeneration.js";
+import { SPAWN_SHIELD_DURATION_MS, applyShield } from "../systems/powerUpSystem.js";
 
 export function loadLevel(scene, levelIndex) {
   const friendlyStates = [

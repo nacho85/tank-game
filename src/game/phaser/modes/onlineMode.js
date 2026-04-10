@@ -1,13 +1,13 @@
 import * as Phaser from "phaser";
-import { BOARD_HEIGHT, BOARD_WIDTH, ENEMY_BODY_BASE_FACING_DEG, ENEMY_TURRET_BASE_FACING_RAD, MACRO_TILE_SIZE, PLAYER_BODY_BASE_FACING_DEG, PLAYER_BODY_RING_CENTER, PLAYER_TURRET_BASE_FACING_RAD, PLAYER_TURRET_CAP_CENTER, TANK_RENDER_SIZE, TILE_SIZE } from "../shared/constants";
-import { vectorLength } from "../shared/math";
-import { POWER_TYPE } from "../systems/powerUpSystem";
-import { clearEntityCollections, syncSceneStatsToMatchState, syncSceneStatusToMatchState } from "../core/state/matchState";
-import { createTankSprite, swapTankSprites, updateTankVisuals } from "../render/tankRendering";
-import { createOnlineSocketClient } from "../online/network/socketClient";
-import { readOnlineSession, updateOnlineSession } from "../online/session";
-import { showOnlineRoundBanner, showOnlineRoundWinnerBanner } from "../ui/hudRenderer";
-import { createOnline2v2Level, ONLINE_BASE_DEFS, getOnlineBaseWorld } from "./onlineLevel";
+import { BOARD_HEIGHT, BOARD_WIDTH, ENEMY_BODY_BASE_FACING_DEG, ENEMY_TURRET_BASE_FACING_RAD, MACRO_TILE_SIZE, PLAYER_BODY_BASE_FACING_DEG, PLAYER_BODY_RING_CENTER, PLAYER_TURRET_BASE_FACING_RAD, PLAYER_TURRET_CAP_CENTER, TANK_RENDER_SIZE, TILE_SIZE } from "../shared/constants.js";
+import { vectorLength } from "../shared/math.js";
+import { POWER_TYPE } from "../systems/powerUpSystem.js";
+import { clearEntityCollections, syncSceneStatsToMatchState, syncSceneStatusToMatchState } from "../core/state/matchState.js";
+import { createTankSprite, swapTankSprites, updateTankVisuals } from "../render/tankRendering.js";
+import { createOnlineSocketClient } from "../online/network/socketClient.js";
+import { readOnlineSession, updateOnlineSession } from "../online/session.js";
+import { showOnlineRoundBanner, showOnlineRoundWinnerBanner } from "../ui/hudRenderer.js";
+import { createOnlineMatchLevel, createOnline2v2Level, ONLINE_BASE_DEFS, getOnlineBaseWorld } from "./onlineLevel.js";
 
 const ONLINE_PLAYER_SPRITE_OPTIONS = {
   bodyMaxFactor: 0.95,
@@ -189,6 +189,11 @@ function getOnlinePlayerSpriteConfig(starCount) {
 
 const TEAM_LABELS = { team1: "Equipo 1", team2: "Equipo 2" };
 const TEAM_SHORT = { team1: "Eq.1", team2: "Eq.2" };
+const CLASSIC_ONLINE_MODE = "Clasico - 80s";
+
+function getOnlineMatchLabel(matchConfig = null) {
+  return String(matchConfig?.mode || "").trim() === CLASSIC_ONLINE_MODE ? "Clasico - 80s online" : "Online 2v2";
+}
 
 function emitOnlineOverlay(scene, payload) {
   if (typeof window === "undefined") return;
@@ -247,15 +252,28 @@ function buildOnlineOverlay(scene) {
   const summaryVisible = !!summary && (!!roundState?.matchOver || !!roundState?.showPartialSummary || wantsStatsPanel);
   const summaryData = summaryVisible ? formatOverlaySummary(summary, !!roundState?.matchOver) : null;
   const chatKeyCode = Math.round(Number(scene.settings?.p1ChatKeyCode || 13));
+  const isClassicOnline = String(online.matchConfig?.mode || "").trim() === CLASSIC_ONLINE_MODE;
+  const classicState = snapshot?.classicState || null;
+  const enemiesLeft = classicState
+    ? Math.max(0, (classicState.totalEnemies ?? 0) - (classicState.destroyedEnemiesCount ?? 0))
+    : 0;
 
   return {
     connected: online.connectionState === "conectado",
-    roundLabel: roundState
-      ? `Online 2v2 - Ronda ${roundState.currentRound}/${roundState.totalRounds}`
-      : "Online 2v2 - Ronda 1/6",
-    resultLabel: roundState
+    roundLabel: isClassicOnline
+      ? `Clásico 80s | Nivel ${(classicState?.levelIndex ?? 0) + 1}`
+      : roundState
+      ? `${getOnlineMatchLabel(online.matchConfig)} - Ronda ${roundState.currentRound}/${roundState.totalRounds}`
+      : `${getOnlineMatchLabel(online.matchConfig)} - Ronda 1/6`,
+    resultLabel: isClassicOnline
+      ? (classicState?.gameOver
+          ? (classicState.gameOverReason === "eagle" ? "¡El águila fue destruida!" : "¡Sin vidas!")
+          : `Enemigos restantes: ${enemiesLeft}`)
+      : roundState
       ? `Resultado ${roundState.scores?.team1 ?? 0} - ${roundState.scores?.team2 ?? 0}`
       : "Resultado 0 - 0",
+    classicGameOver: isClassicOnline && !!classicState?.gameOver,
+    classicGameOverReason: classicState?.gameOverReason || null,
     myLives: localPlayer ? `${localPlayer.livesRemaining ?? (localPlayer.isDestroyed ? 0 : 1)}/${localPlayer.roundLives ?? 1}` : "--",
     mateLives: teammate ? `${teammate.livesRemaining ?? (teammate.isDestroyed ? 0 : 1)}/${teammate.roundLives ?? 1}` : "--",
     showSummary: !!summaryVisible,
@@ -297,6 +315,55 @@ function safeSetSceneText(node, text) {
 function destroyRemoteTankVisual(tank) {
   tank?.label?.destroy?.();
   tank?.container?.destroy?.();
+}
+
+// ── Classic 80s enemy visuals ─────────────────────────────────────────────
+const ONLINE_ENEMY_SPRITE_OPTIONS = {
+  bodyMaxFactor: 0.95,
+  turretMaxFactor: 1.0,
+  turretScaleX: 1.0,
+  depthOffset: 0,
+  depthOffsetTurret: 1,
+};
+
+function createOnlineEnemyVisual(scene, enemy) {
+  const spriteParts = createTankSprite(
+    scene,
+    scene.boardOriginX + enemy.x,
+    scene.boardOriginY + enemy.y,
+    "enemy-body-gray-v2",
+    "enemy-turret-gray-v2",
+    TANK_RENDER_SIZE,
+    ENEMY_BODY_BASE_FACING_DEG,
+    enemy.moveAngleDeg ?? 90,
+    ENEMY_TURRET_BASE_FACING_RAD,
+    ONLINE_ENEMY_SPRITE_OPTIONS,
+  );
+
+  const visual = {
+    id: enemy.id,
+    type: "online-enemy",
+    ...spriteParts,
+    x: scene.boardOriginX + enemy.x,
+    y: scene.boardOriginY + enemy.y,
+    targetX: scene.boardOriginX + enemy.x,
+    targetY: scene.boardOriginY + enemy.y,
+    moveAngleDeg: enemy.moveAngleDeg ?? 90,
+    targetMoveAngleDeg: enemy.moveAngleDeg ?? 90,
+    turretAngleRad: enemy.turretAngleRad ?? (Math.PI / 2),
+    targetTurretAngleRad: enemy.turretAngleRad ?? (Math.PI / 2),
+    isDestroyed: false,
+    isPowerCarrier: !!enemy.isPowerCarrier,
+    _flashPhase: 0,    // accumulated ms for the flash cycle
+    _flashOn: false,
+  };
+
+  updateTankVisuals(scene, visual);
+  return visual;
+}
+
+function destroyOnlineEnemyVisual(enemy) {
+  enemy?.container?.destroy?.();
 }
 
 function destroyRemoteBulletVisual(bullet) {
@@ -747,6 +814,20 @@ function buildLocalInput(scene) {
 // ── Round HUD ────────────────────────────────────────────────────────────
 function updateRoundHUD(scene, roundState, winnerTeam) {
   if (!roundState) return;
+  if (String(scene.onlineState?.matchConfig?.mode || "").trim() === CLASSIC_ONLINE_MODE) {
+    const cs = scene.onlineState?.snapshot?.classicState || null;
+    const levelNum = (cs?.levelIndex ?? 0) + 1;
+    const enemiesLeft = cs ? Math.max(0, (cs.totalEnemies ?? 0) - (cs.destroyedEnemiesCount ?? 0)) : "?";
+    scene.levelText.setText(`${getOnlineMatchLabel(scene.onlineState?.matchConfig)} | Nivel ${levelNum}`);
+    if (cs?.gameOver) {
+      scene.coopText.setText(cs.gameOverReason === "eagle" ? "¡El águila fue destruida! - Fin" : "¡Sin vidas! - Fin");
+    } else if (cs?.levelTransitioning) {
+      scene.coopText.setText(`¡Nivel ${levelNum} completado!`);
+    } else {
+      scene.coopText.setText(`Enemigos: ${enemiesLeft}`);
+    }
+    return;
+  }
   const { currentRound, totalRounds, scores, matchOver, matchWinner, transitioning, sideSwitched } = roundState;
   const t1 = scores?.team1 ?? 0;
   const t2 = scores?.team2 ?? 0;
@@ -767,7 +848,7 @@ function updateRoundHUD(scene, roundState, winnerTeam) {
     scene.levelText.setText(`Ronda ${currentRound}/${totalRounds} | ¡Ganó ${roundWinLabel}!`);
     scene.coopText.setText(scoreStr);
   } else {
-    scene.levelText.setText(`Online 2v2 | Ronda ${currentRound}/${totalRounds}`);
+    scene.levelText.setText(`${getOnlineMatchLabel(scene.onlineState?.matchConfig)} | Ronda ${currentRound}/${totalRounds}`);
     scene.coopText.setText(scoreStr);
   }
 }
@@ -1146,8 +1227,10 @@ function syncSnapshot(scene, snapshot) {
   scene.onlineState.snapshot = snapshot;
   const seenTankIds = new Set();
   const seenBulletIds = new Set();
+  const seenEnemyIds = new Set();
   const players = Array.isArray(snapshot?.players) ? snapshot.players : [];
   const bullets = Array.isArray(snapshot?.bullets) ? snapshot.bullets : [];
+  const classicEnemies = Array.isArray(snapshot?.classicEnemies) ? snapshot.classicEnemies : [];
   const activeMissileStrikes = Array.isArray(snapshot?.activeMissileStrikes) ? snapshot.activeMissileStrikes : [];
   const missileImpactEffects = Array.isArray(snapshot?.missileImpactEffects) ? snapshot.missileImpactEffects : [];
   const bases = Array.isArray(snapshot?.bases) ? snapshot.bases : [];
@@ -1262,6 +1345,40 @@ function syncSnapshot(scene, snapshot) {
     delete scene.onlineState.remoteBulletsById[id];
   });
 
+  // ── Classic 80s enemies ─────────────────────────────────────────────────
+  if (!scene.onlineState.onlineEnemiesById) scene.onlineState.onlineEnemiesById = {};
+  if (!scene.onlineState.prevEnemyDestroyedById) scene.onlineState.prevEnemyDestroyedById = {};
+
+  classicEnemies.forEach((remoteEnemy) => {
+    seenEnemyIds.add(remoteEnemy.id);
+    let visual = scene.onlineState.onlineEnemiesById[remoteEnemy.id];
+    if (!visual) {
+      visual = createOnlineEnemyVisual(scene, remoteEnemy);
+      scene.onlineState.onlineEnemiesById[remoteEnemy.id] = visual;
+    }
+
+    const prevDestroyed = scene.onlineState.prevEnemyDestroyedById[remoteEnemy.id] ?? false;
+    if (!prevDestroyed && remoteEnemy.isDestroyed) {
+      spawnOnlineTankExplosion(scene, scene.boardOriginX + remoteEnemy.x, scene.boardOriginY + remoteEnemy.y);
+    }
+    scene.onlineState.prevEnemyDestroyedById[remoteEnemy.id] = remoteEnemy.isDestroyed;
+
+    visual.isDestroyed = remoteEnemy.isDestroyed;
+    visual.isPowerCarrier = !!remoteEnemy.isPowerCarrier;
+    visual.targetX = scene.boardOriginX + remoteEnemy.x;
+    visual.targetY = scene.boardOriginY + remoteEnemy.y;
+    visual.targetMoveAngleDeg = remoteEnemy.moveAngleDeg ?? visual.targetMoveAngleDeg;
+    visual.targetTurretAngleRad = remoteEnemy.turretAngleRad ?? visual.targetTurretAngleRad;
+    visual.container?.setVisible?.(!remoteEnemy.isDestroyed);
+  });
+
+  Object.entries(scene.onlineState.onlineEnemiesById).forEach(([id, visual]) => {
+    if (seenEnemyIds.has(id)) return;
+    destroyOnlineEnemyVisual(visual);
+    delete scene.onlineState.onlineEnemiesById[id];
+    delete scene.onlineState.prevEnemyDestroyedById[id];
+  });
+
   syncOnlineBaseVisuals(scene, bases);
   syncOnlineMissileImpactEffects(scene, missileImpactEffects);
   syncOnlineMissileStrikes(scene, activeMissileStrikes, snapshot?.serverTime);
@@ -1269,8 +1386,29 @@ function syncSnapshot(scene, snapshot) {
   // ── Power-ups del servidor ──────────────────────────────────────────────
   syncOnlinePowerUps(scene, Array.isArray(snapshot?.powerUps) ? snapshot.powerUps : []);
 
+  // ── Classic 80s HUD update (always run for classic) ────────────────────
+  const classicState = snapshot?.classicState || null;
+  if (String(scene.onlineState?.matchConfig?.mode || "").trim() === CLASSIC_ONLINE_MODE) {
+    updateRoundHUD(scene, roundState, winnerTeam);
+
+    if (classicState?.gameOver && !scene.onlineState.classicGameOverShown) {
+      const msg = classicState.gameOverReason === "eagle"
+        ? "¡El águila fue destruida! Game Over"
+        : "¡Sin vidas! Game Over";
+      scene.showMessage(msg);
+      scene.onlineState.classicGameOverShown = true;
+    }
+
+    const prevLevel = scene.onlineState.lastKnownClassicLevel ?? null;
+    const curLevel = classicState?.levelIndex ?? 0;
+    if (prevLevel !== null && curLevel !== prevLevel) {
+      scene.showMessage(`¡Nivel ${curLevel + 1}!`);
+    }
+    scene.onlineState.lastKnownClassicLevel = curLevel;
+  }
+
   // ── Round state HUD + notifications ────────────────────────────────────
-  if (roundState) {
+  if (roundState && String(scene.onlineState?.matchConfig?.mode || "").trim() !== CLASSIC_ONLINE_MODE) {
     updateRoundHUD(scene, roundState, winnerTeam);
 
     // Detect round change → show message
@@ -1319,6 +1457,7 @@ export function teardownOnlineMode(scene) {
   hideOnlineOverlay(scene);
   Object.values(scene.onlineState?.remoteTanksById || {}).forEach(destroyRemoteTankVisual);
   Object.values(scene.onlineState?.remoteBulletsById || {}).forEach(destroyRemoteBulletVisual);
+  Object.values(scene.onlineState?.onlineEnemiesById || {}).forEach(destroyOnlineEnemyVisual);
   Object.values(scene.onlineState?.onlineMissileStrikesById || {}).forEach(destroyOnlineMissileVisual);
   Object.values(scene.onlineState?.effects || {}).forEach(destroyOnlineEffect);
   // Destruir power-up sprites online
@@ -1342,6 +1481,10 @@ export function teardownOnlineMode(scene) {
     lastFireSentAt: 0,
     baseVisualsById: {},
     prevDestroyedById: {},
+    onlineEnemiesById: {},
+    prevEnemyDestroyedById: {},
+    classicGameOverShown: false,
+    lastKnownClassicLevel: null,
     prevRoundWinnerKey: null,
     lastKnownRound: 1,
     matchOverShown: false,
@@ -1361,14 +1504,14 @@ export function loadOnlineMode(scene) {
   teardownOnlineMode(scene);
 
   const preloadedMatchConfig = readOnlineSession()?.matchConfig || null;
-  scene.level = createOnline2v2Level(preloadedMatchConfig || { mapAlgorithm: 0 });
+  scene.level = createOnlineMatchLevel(preloadedMatchConfig || { mapAlgorithm: 0 });
   scene.totalEnemiesForLevel = 0;
   scene.maxConcurrentEnemies = 0;
   scene.spawnedEnemiesCount = 0;
   scene.destroyedEnemiesCount = 0;
   scene.playerLivesRemaining = 0;
   scene.playerTwoLivesRemaining = 0;
-  safeSetSceneText(scene.levelText, `Online 2v2 | Ronda 1/${Math.max(1, Number(preloadedMatchConfig?.totalRounds || 6))}`);
+  safeSetSceneText(scene.levelText, `${getOnlineMatchLabel(preloadedMatchConfig)} | Ronda 1/${Math.max(1, Number(preloadedMatchConfig?.totalRounds || 6))}`);
   safeSetSceneText(scene.coopText, "Conectando...");
   scene.drawBoard();
   ensureOnlineBases(scene);
@@ -1402,7 +1545,7 @@ export function loadOnlineMode(scene) {
       updateOnlineSession({ inMatch: true, matchConfig: payload.matchConfig || scene.onlineState.matchConfig || null });
       const rs = payload.roundState;
       if (rs) {
-        safeSetSceneText(scene.levelText, `Online 2v2 | Ronda ${rs.currentRound}/${rs.totalRounds}`);
+        safeSetSceneText(scene.levelText, `${getOnlineMatchLabel(payload.matchConfig)} | Ronda ${rs.currentRound}/${rs.totalRounds}`);
         safeSetSceneText(scene.coopText, `${TEAM_SHORT.team1}: ${rs.scores?.team1 ?? 0}  -  ${TEAM_SHORT.team2}: ${rs.scores?.team2 ?? 0}`);
       } else {
         safeSetSceneText(scene.coopText, `Online: ${payload.roleLabel || "conectado"}`);
@@ -1448,6 +1591,46 @@ function smoothRemoteState(scene, delta) {
     tank.label?.setVisible?.(visible);
     if (visible) {
       updateTankVisuals(scene, tank);
+    }
+  });
+
+  // ── Classic enemies smooth ────────────────────────────────────────────
+  const POWER_CARRIER_FLASH_MS = 150;
+  Object.values(scene.onlineState.onlineEnemiesById || {}).forEach((enemy) => {
+    if (enemy.isDestroyed) return;
+    enemy.x += (enemy.targetX - enemy.x) * positionLerp;
+    enemy.y += (enemy.targetY - enemy.y) * positionLerp;
+    enemy.moveAngleDeg = wrapAngleDeg(enemy.moveAngleDeg + wrapDegDiff(enemy.targetMoveAngleDeg, enemy.moveAngleDeg) * bodyLerp);
+    const turretDiff = wrapAngleRad(enemy.targetTurretAngleRad - enemy.turretAngleRad);
+    enemy.turretAngleRad = wrapAngleRad(enemy.turretAngleRad + turretDiff * turretLerp);
+    updateTankVisuals(scene, enemy);
+
+    // Clock freeze: blue tint when enemies are frozen
+    const classicFrozen = !!scene.onlineState.snapshot?.classicState?.enemiesFrozen;
+    if (classicFrozen && enemy.body?.active && !enemy.isPowerCarrier) {
+      enemy.body?.setTint?.(0x99ccff);
+      enemy.turret?.setTint?.(0x99ccff);
+    } else if (!classicFrozen && !enemy.isPowerCarrier && enemy._wasFrozen) {
+      enemy.body?.clearTint?.();
+      enemy.turret?.clearTint?.();
+    }
+    enemy._wasFrozen = classicFrozen;
+
+    // Power carrier flash: alternate tints every 150ms
+    if (enemy.isPowerCarrier && enemy.body?.active) {
+      enemy._flashPhase = ((enemy._flashPhase || 0) + delta) % (POWER_CARRIER_FLASH_MS * 2);
+      const newFlashOn = enemy._flashPhase < POWER_CARRIER_FLASH_MS;
+      if (newFlashOn !== enemy._flashOn) {
+        enemy._flashOn = newFlashOn;
+        const tint = newFlashOn ? 0xf6e05e : 0xff8c42;
+        enemy.body?.setTint?.(tint);
+        enemy.turret?.setTint?.(tint);
+      }
+    } else if (!enemy.isPowerCarrier && enemy._flashOn) {
+      // Was a power carrier but no longer (shouldn't normally happen mid-life)
+      enemy._flashOn = false;
+      enemy.body?.clearTint?.();
+      enemy.turret?.clearTint?.();
     }
   });
 
@@ -1519,7 +1702,8 @@ export function updateOnlineMode(scene, delta) {
   const isTransitioning = rs?.transitioning || rs?.matchOver;
   emitOnlineOverlay(scene, buildOnlineOverlay(scene));
 
-  if (rs?.matchOver) {
+  const classicGameOver = !!scene.onlineState.snapshot?.classicState?.gameOver;
+  if (rs?.matchOver || classicGameOver) {
     const wantsExit = scene.keys.enter?.isDown || scene.keys.space?.isDown || scene.keys.esc?.isDown
       || scene.readPadButtonPressed(0, 0.35, 0)
       || scene.readPadButtonPressed(1, 0.35, 0)
@@ -1535,7 +1719,7 @@ export function updateOnlineMode(scene, delta) {
     }
   }
 
-  if (scene.onlineClient?.isConnected?.() && !rs?.matchOver) {
+  if (scene.onlineClient?.isConnected?.() && !rs?.matchOver && !classicGameOver) {
     const input = buildLocalInput(scene);
     scene.onlineClient.sendInput({
       moveX: input.moveX,

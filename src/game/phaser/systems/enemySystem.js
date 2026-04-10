@@ -13,7 +13,7 @@ import {
   TANKETTE_TURRET_PIVOT,
   TILE,
   TILE_SIZE,
-} from "../shared/constants";
+} from "../shared/constants.js";
 import {
   bigCellCenterX,
   bigCellCenterY,
@@ -27,7 +27,7 @@ import {
   isBlockingTile,
   worldToGridCol,
   worldToGridRow,
-} from "../shared/levelGeneration";
+} from "../shared/levelGeneration.js";
 import {
   angleDegFromVector,
   clamp,
@@ -36,8 +36,8 @@ import {
   randomChoice,
   vectorLength,
   wrapRadDiff,
-} from "../shared/math";
-import { registerEnemy, syncSceneStatsToMatchState, syncSceneStatusToMatchState, unregisterEnemy } from "../core/state/matchState";
+} from "../shared/math.js";
+import { registerEnemy, syncSceneStatsToMatchState, syncSceneStatusToMatchState, unregisterEnemy } from "../core/state/matchState.js";
 
 const POWER_CARRIER_SPAWN_NUMBERS = new Set([4, 11, 18]);
 

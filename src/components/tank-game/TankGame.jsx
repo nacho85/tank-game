@@ -1,8 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useState } from "react";
-import TankGameLanding from "./TankGameLanding";
-import TankGameRuntime from "./TankGameRuntime";
+import TankGameLanding from "./TankGameLanding.jsx";
+import TankGameRuntime from "./TankGameRuntime.jsx";
 import { clearOnlineSession, readOnlineSession } from "@/game/phaser/online/session";
 import { SETTINGS_STORAGE_KEY } from "@/game/phaser/shared/constants";
 

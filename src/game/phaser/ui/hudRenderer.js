@@ -1,4 +1,4 @@
-import { HUD_SIDEBAR_WIDTH, MESSAGE_DURATION } from "../shared/constants";
+import { HUD_SIDEBAR_WIDTH, MESSAGE_DURATION } from "../shared/constants.js";
 
 function emitLocalOverlay(payload = null) {
   if (typeof window === "undefined") return;

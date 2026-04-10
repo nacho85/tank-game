@@ -1,4 +1,4 @@
-import { resetMatchState, syncSceneStatusToMatchState } from "../core/state/matchState";
+import { resetMatchState, syncSceneStatusToMatchState } from "../core/state/matchState.js";
 
 export function getCurrentGameMode(scene) {
   const rawMode = Math.round(scene.settings?.gameMode || 0);

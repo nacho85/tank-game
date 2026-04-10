@@ -1,8 +1,8 @@
-import { PLAYER_RESPAWN_DELAY } from "../shared/constants";
-import { bigCellCenterX, bigCellCenterY } from "../shared/levelGeneration";
-import { syncSceneStatusToMatchState, unregisterTank } from "../core/state/matchState";
-import { refreshLocalTopHud, showGameOverBanner } from "../ui/hudRenderer";
-import { SPAWN_SHIELD_DURATION_MS, applyShield } from "./powerUpSystem";
+import { PLAYER_RESPAWN_DELAY } from "../shared/constants.js";
+import { bigCellCenterX, bigCellCenterY } from "../shared/levelGeneration.js";
+import { syncSceneStatusToMatchState, unregisterTank } from "../core/state/matchState.js";
+import { refreshLocalTopHud, showGameOverBanner } from "../ui/hudRenderer.js";
+import { SPAWN_SHIELD_DURATION_MS, applyShield } from "./powerUpSystem.js";
 
 export function updateLivesText(scene) {
   if (!scene.livesText) return;

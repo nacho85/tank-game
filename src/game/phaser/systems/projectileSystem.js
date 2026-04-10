@@ -5,7 +5,7 @@ import {
   MACRO_TILE_SIZE,
   TANK_HIT_RADIUS,
   TILE,
-} from "../shared/constants";
+} from "../shared/constants.js";
 import {
   bigCellCenterX,
   bigCellCenterY,
@@ -19,12 +19,12 @@ import {
   isDestructibleTile,
   worldToGridCol,
   worldToGridRow,
-} from "../shared/levelGeneration";
-import { vectorLength } from "../shared/math";
-import { getOnlineBaseDefByAnchor } from "../modes/onlineLevel";
-import { registerBullet, unregisterBullet } from "../core/state/matchState";
-import { createBulletState, getWeaponConfigForTankType, stepBulletState } from "../core/sim/weaponSystem";
-import { showGameOverBanner } from "../ui/hudRenderer";
+} from "../shared/levelGeneration.js";
+import { vectorLength } from "../shared/math.js";
+import { getOnlineBaseDefByAnchor } from "../modes/onlineLevel.js";
+import { registerBullet, unregisterBullet } from "../core/state/matchState.js";
+import { createBulletState, getWeaponConfigForTankType, stepBulletState } from "../core/sim/weaponSystem.js";
+import { showGameOverBanner } from "../ui/hudRenderer.js";
 
 // Desplazamiento perpendicular (px) entre las dos balas del disparo doble.
 // Tiene que coincidir con el valor de playerUpgrades si se importa desde allá,

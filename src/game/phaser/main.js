@@ -1,5 +1,5 @@
 import * as Phaser from "phaser";
-import { createGameConfig } from "./config";
+import { createGameConfig } from "./config.js";
 
 /**
  * Crea la instancia de Phaser montada en el contenedor que llega desde React.
