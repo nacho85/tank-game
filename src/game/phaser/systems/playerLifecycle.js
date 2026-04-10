@@ -11,7 +11,14 @@ export function updateLivesText(scene) {
   const remainingP2 = Math.max(0, scene.playerTwoLivesRemaining || 0);
   const respawnP1 = scene.playerRespawnEvents?.[1] ? " · P1 reapareciendo" : "";
   const respawnP2 = scene.playerRespawnEvents?.[2] ? " · P2 reapareciendo" : "";
-  scene.livesText.setText(`Vidas P1: ${remainingP1}/${total}\nVidas P2: ${remainingP2}/${total}${respawnP1}${respawnP2}`);
+  const showP2JoinPrompt =
+    (scene.currentGameMode === "survival" || scene.currentGameMode === "classic") &&
+    !scene.playerTwo &&
+    !scene.playerTwoJoined;
+  const p2Label = showP2JoinPrompt
+    ? (Math.floor((scene.time?.now || 0) / 1000) % 2 === 0 ? "P2" : "PRESS START")
+    : `Vidas P2: ${remainingP2}/${total}${respawnP2}`;
+  scene.livesText.setText(`Vidas P1: ${remainingP1}/${total}${respawnP1}\n${p2Label}`);
   if (scene.currentGameMode === "survival") {
     scene.updateWaveText?.();
   } else {
@@ -99,7 +106,7 @@ export function tryRespawnPlayer(scene, slot = 1) {
   }
 
   const tank = scene.createPlayerTankForSlot(slot);
-  if (scene.currentGameMode === "survival" && tank) {
+  if (tank) {
     applyShield(scene, tank, SPAWN_SHIELD_DURATION_MS, { flickerOnExpire: false });
   }
   scene.updateLivesText();

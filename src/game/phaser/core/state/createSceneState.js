@@ -29,6 +29,7 @@ export function createSceneState(scene, width, height) {
   scene.activePowerEffects = {};
   scene.wasPlayerFireDown = false;
   scene.wasPlayerTwoFireDown = false;
+  scene.localJoinPromptBlinkTick = -1;
   scene.wasPadStartPressed = {};
   scene.pendingEnemySpawnEvents = [];
   scene.enemies = [];

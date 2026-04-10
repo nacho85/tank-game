@@ -40,7 +40,7 @@ export const BULLET_SPEED = 620;
 export const FIRE_COOLDOWN_PLAYER = 170;
 export const FIRE_COOLDOWN_ENEMY = 950;
 export const MESSAGE_DURATION = 1200;
-export const PLAYER_TURRET_MANUAL_TURN_SPEED = (160 * Math.PI) / 180;
+export const PLAYER_TURRET_MANUAL_TURN_SPEED = (176 * Math.PI) / 180;
 
 export const MOVE_DEADZONE = 0.2;
 export const AIM_DEADZONE = 0.22;

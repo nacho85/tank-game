@@ -60,11 +60,34 @@ const MENU_SCREENS = {
   single: {
     breadcrumb: "CENTRO DE OPERACIONES / LOCAL",
     items: [
-      { label: "Clásico", action: "play", gameMode: "classic" },
+      { label: "Clásico", next: "classicSeries" },
       { label: "Survival", next: "survivalDifficulty" },
       { label: "Volver", back: true },
     ],
     status: "Seleccioná un modo individual.",
+  },
+  classicSeries: {
+    breadcrumb: "CENTRO DE OPERACIONES / LOCAL / CLÁSICO",
+    items: [
+      {
+        label: "80s",
+        action: "play",
+        gameMode: "classic",
+        localSettings: {
+          classicVariant: "80s",
+          enemyTanketteRatio: 35,
+        },
+        status: "Campaña 80s: primeros 5 niveles inspirados en Battle City.",
+      },
+      {
+        label: "Boss",
+        action: "play",
+        gameMode: "classic",
+        localSettings: { classicVariant: "boss" },
+      },
+      { label: "Volver", back: true, backTo: "single" },
+    ],
+    status: "Elegí qué rama del clásico querés jugar.",
   },
   survivalDifficulty: {
     breadcrumb: "CENTRO DE OPERACIONES / LOCAL / SURVIVAL / DIFICULTAD",
@@ -1510,7 +1533,7 @@ export default function TankGameLanding({ onStartGame }) {
       setStatusText("Buscando salas disponibles.");
       return;
     }
-    setStatusText("Sección en preparación.");
+    setStatusText(item.status || "Sección en preparación.");
   }
 
   useEffect(() => {

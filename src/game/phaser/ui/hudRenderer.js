@@ -257,8 +257,11 @@ function buildLocalLivesLabel(scene) {
   const p1Lives = Math.max(0, scene.playerLivesRemaining || 0);
   const p2Lives = Math.max(0, scene.playerTwoLivesRemaining || 0);
   const parts = [`P1 ${p1Lives}/${totalLives}`];
-  const showJoinPrompt = scene.currentGameMode === "survival" && !scene.playerTwo;
-  const blinkPhase = Math.floor((scene.time?.now || 0) / 450) % 2 === 0;
+  const showJoinPrompt =
+    (scene.currentGameMode === "survival" || scene.currentGameMode === "classic") &&
+    !scene.playerTwo &&
+    !scene.playerTwoJoined;
+  const blinkPhase = Math.floor((scene.time?.now || 0) / 1000) % 2 === 0;
 
   if (showJoinPrompt) {
     parts.push(blinkPhase ? "P2" : "PRESS START");
@@ -658,4 +661,3 @@ export function showOnlineMatchSummary(scene, summary = null, options = {}) {
   scene.onlineSummarySubtitle.setVisible(true);
   scene.onlineSummaryRows.forEach((node) => node?.setVisible?.(true));
 }
-

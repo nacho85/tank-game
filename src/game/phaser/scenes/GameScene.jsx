@@ -33,7 +33,6 @@ import {
 import { createSceneState } from "../core/state/createSceneState";
 import { clearEntityCollections, syncSceneStatsToMatchState, syncSceneStatusToMatchState } from "../core/state/matchState";
 import { createHud, showMessage as showHudMessage, updateStatsText as renderStatsText, updateWaveText as renderWaveText } from "../ui/hudRenderer";
-import { LEVELS } from "../core/levels";
 import { createTankSprite, updateTankVisuals } from "../render/tankRendering";
 import {
   createPlayer,
@@ -315,6 +314,7 @@ export class GameScene extends Phaser.Scene {
     });
     defaults.enemyAimErrorDeg = 0;
     defaults.enemyRushMode = 0;
+    defaults.classicVariant = "boss";
 
     if (typeof window === "undefined") {
       return defaults;
@@ -342,6 +342,8 @@ export class GameScene extends Phaser.Scene {
       if (!Number.isNaN(enemyRushMode)) {
         merged.enemyRushMode = clamp(Math.round(enemyRushMode), 0, 3);
       }
+
+      merged.classicVariant = parsed?.classicVariant === "80s" ? "80s" : "boss";
 
       return merged;
     } catch {
@@ -2716,6 +2718,19 @@ export class GameScene extends Phaser.Scene {
     this.updatePadStatus();
     if (this.currentGameMode !== "online_2v2") {
       this.tryJoinSecondPlayer();
+      const shouldBlinkJoinPrompt =
+        (this.currentGameMode === "classic" || this.currentGameMode === "survival") &&
+        !this.playerTwo &&
+        !this.playerTwoJoined;
+      if (shouldBlinkJoinPrompt) {
+        const currentBlinkTick = Math.floor((this.time?.now || 0) / 1000);
+        if (this.localJoinPromptBlinkTick !== currentBlinkTick) {
+          this.localJoinPromptBlinkTick = currentBlinkTick;
+          this.updateLivesText();
+        }
+      } else if (this.localJoinPromptBlinkTick !== -1) {
+        this.localJoinPromptBlinkTick = -1;
+      }
     }
 
     if (this.isMenuOpen) {
@@ -3047,12 +3062,25 @@ export class GameScene extends Phaser.Scene {
     this.isTransitioning = true;
     syncSceneStatusToMatchState(this);
 
-    if (this.currentLevelIndex >= LEVELS.length - 1) {
-      this.showMessage("Nivel 5 completado\nEntrando boss...");
-      this.time.delayedCall(1200, () => {
+    const classicLevelCount = this.classicLevels?.length || 0;
+    const hasMoreClassicLevels = this.currentLevelIndex < classicLevelCount - 1;
+
+    if (!hasMoreClassicLevels) {
+      if (this.classicModeConfig?.hasBossAfterLast) {
+        this.showMessage(`Nivel ${classicLevelCount} completado\nEntrando boss...`);
+        this.time.delayedCall(1200, () => {
+          this.isTransitioning = false;
+          syncSceneStatusToMatchState(this);
+          this.startBossBattle();
+        });
+        return;
+      }
+
+      this.showMessage("Demo 80s completada\nVolviendo al nivel 1...");
+      this.time.delayedCall(1400, () => {
         this.isTransitioning = false;
         syncSceneStatusToMatchState(this);
-        this.startBossBattle();
+        this.loadSelectedGameMode();
       });
       return;
     }

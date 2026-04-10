@@ -8,6 +8,7 @@ import {
 import { bigCellCenterX, bigCellCenterY } from "../shared/levelGeneration";
 import { vectorLength } from "../shared/math";
 import { computeTankControlStep } from "../core/sim/tankController";
+import { SPAWN_SHIELD_DURATION_MS, applyShield } from "../systems/powerUpSystem";
 
 const DEFAULT_BINDINGS = {
   p1MoveUpKeyCode: Phaser.Input.Keyboard.KeyCodes.W,
@@ -177,7 +178,10 @@ export function tryJoinSecondPlayer(scene) {
   const spawnY = bigCellCenterY(spawn.row, scene.boardOriginY);
   if (!scene.canOccupyWorldPosition(spawnX, spawnY, null)) return;
 
-  scene.createPlayerTwo();
+  const playerTwo = scene.createPlayerTwo();
+  if (playerTwo) {
+    applyShield(scene, playerTwo, SPAWN_SHIELD_DURATION_MS, { flickerOnExpire: false });
+  }
   scene.showMessage("Jugador 2 unido");
 }
 

@@ -39,6 +39,38 @@ import {
 } from "../shared/math";
 import { registerEnemy, syncSceneStatsToMatchState, syncSceneStatusToMatchState, unregisterEnemy } from "../core/state/matchState";
 
+const POWER_CARRIER_SPAWN_NUMBERS = new Set([4, 11, 18]);
+
+function clearEnemyPowerCarrierVisuals(enemy) {
+  if (!enemy) return;
+  enemy.powerCarrierFlashEvent?.remove?.(false);
+  enemy.powerCarrierFlashEvent = null;
+  enemy.body?.clearTint?.();
+  enemy.turret?.clearTint?.();
+}
+
+export function markEnemyAsPowerCarrier(scene, enemy) {
+  if (!enemy || enemy.isBoss || enemy.isPowerCarrier) return;
+
+  enemy.isPowerCarrier = true;
+  enemy.dropPowerUpOnDestroy = true;
+  enemy.powerCarrierFlashOn = false;
+  enemy.powerCarrierFlashEvent = scene.time.addEvent({
+    delay: 150,
+    repeat: -1,
+    callback: () => {
+      if (!enemy.body?.active) {
+        clearEnemyPowerCarrierVisuals(enemy);
+        return;
+      }
+      enemy.powerCarrierFlashOn = !enemy.powerCarrierFlashOn;
+      const tint = enemy.powerCarrierFlashOn ? 0xf6e05e : 0xff8c42;
+      enemy.body?.setTint?.(tint);
+      enemy.turret?.setTint?.(tint);
+    },
+  });
+}
+
 export function handleEnemyDestroyed(scene, enemy, killerType = "player") {
   if (!enemy) return;
 
@@ -65,9 +97,14 @@ export function handleEnemyDestroyed(scene, enemy, killerType = "player") {
   syncSceneStatsToMatchState(scene);
   scene.noteCombatDeath("enemy");
   scene.spawnTankHitExplosion(enemy.x, enemy.y);
+  clearEnemyPowerCarrierVisuals(enemy);
   enemy.container?.destroy();
   scene.enemies = scene.enemies.filter((item) => item !== enemy);
   unregisterEnemy(scene, enemy);
+
+  if (enemy.dropPowerUpOnDestroy) {
+    scene.spawnRandomPowerUp?.();
+  }
 
   const shuffleEveryKills = Math.max(
     0,
@@ -377,6 +414,9 @@ export function fillEnemyWaveSlots(scene) {
     if (!enemy) break;
     scene.enemies.push(enemy);
     scene.spawnedEnemiesCount += 1;
+    if (!isSurvival && POWER_CARRIER_SPAWN_NUMBERS.has(scene.spawnedEnemiesCount)) {
+      markEnemyAsPowerCarrier(scene, enemy);
+    }
 
     // Survival: tanques 4, 11, 18, 25… (cada 7 desde el 4) son blindados
     if (isSurvival && scene.spawnedEnemiesCount >= 4 && (scene.spawnedEnemiesCount - 4) % 7 === 0) {
