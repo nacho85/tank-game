@@ -1,6 +1,5 @@
-
-import TankGame from "@/components/tank-game/TankGame";
+import { notFound } from "next/navigation";
 
 export default function TankGamePage() {
-  return <TankGame />;
+  notFound();
 }

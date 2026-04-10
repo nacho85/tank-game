@@ -1910,6 +1910,14 @@ function resetPlayerForRespawn(player) {
   activateSpawnShield(player);
 }
 
+function clearRoundFreezeState() {
+  gameplayRoom.teamFreezeEffects.clear();
+  gameplayRoom.players.forEach((player) => {
+    if (!player) return;
+    player.freezeExemptUntil = 0;
+  });
+}
+
 function resetPlayerUpgradeState(player) {
   if (!player) return;
   const tier = getUpgradeTier(0);
@@ -1948,7 +1956,7 @@ function startNewRound() {
   gameplayRoom.missileImpactEffects = [];
   gameplayRoom.chatMessages = [];
   gameplayRoom.baseFortressEffects.clear();
-  gameplayRoom.teamFreezeEffects.clear();
+  clearRoundFreezeState();
 
   gameplayRoom.players.forEach((player) => {
     player.activeBulletIds = new Set();
@@ -2405,6 +2413,7 @@ function tick() {
   if (gameplayRoom.status.winnerTeam && !gameplayRoom.roundState.transitioning && !gameplayRoom.roundState.matchOver) {
     const colorWinner = colorTeamForGeographicWinner(gameplayRoom.status.winnerTeam, gameplayRoom.roundState.sideSwitched);
     gameplayRoom.roundState.scores[colorWinner] = (gameplayRoom.roundState.scores[colorWinner] || 0) + 1;
+    clearRoundFreezeState();
 
     const matchWinner = getMatchWinner();
     if (matchWinner) {
