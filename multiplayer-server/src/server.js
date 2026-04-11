@@ -2696,7 +2696,11 @@ function buildSnapshot() {
       colorTeam: player.colorTeam,
       starCount: Number(player.starCount || 0),
       extraLives: Math.max(0, Number(player.extraLives || 0)),
-      livesRemaining: Math.max(0, Number(player.extraLives || 0) + (player.isDestroyed ? 0 : 1)),
+      livesRemaining: Math.max(
+        0,
+        Number(player.extraLives || 0)
+          + (player.isDestroyed ? (Number(player.respawnAt || 0) > 0 ? 1 : 0) : 1),
+      ),
       roundLives: Math.max(1, Number(gameplayRoom.matchConfig?.livesPerRound || 1)),
     })),
     bullets: Array.from(gameplayRoom.bullets.values()).map((bullet) => ({
